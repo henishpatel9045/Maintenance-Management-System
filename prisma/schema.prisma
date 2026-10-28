@@ -1,0 +1,1075 @@
+// Prisma Schema for Seva Maintenance Management System
+// Modular Monolith Sections: Users, Masters, Seva, Files, Comments & Activity, Notifications & Reminders, Settings
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pg_trgm]
+}
+
+// ==========================================
+// SECTION 1: USERS, ROLES & AUTH
+// ==========================================
+
+model User {
+  id                 String    @id @default(uuid()) @db.Uuid
+  name               String    @db.VarChar(255)
+  email              String?   @unique @db.VarChar(255)
+  phone              String?   @unique @db.VarChar(50)
+  passwordHash       String    @map("password_hash") @db.VarChar(255)
+  roleId             String    @map("role_id") @db.Uuid
+  isActive           Boolean   @default(true) @map("is_active")
+  mustChangePassword Boolean   @default(false) @map("must_change_password")
+  lastLoginAt        DateTime? @map("last_login_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  role                Role                     @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  permissionOverrides UserPermissionOverride[]
+  sessions            Session[]
+  assignedSevas       SevaAssignee[]           @relation("AssigneeUser")
+  leadAssignments     SevaAssignee[]           @relation("AssignedByUser")
+  watchedSevas        SevaWatcher[]
+  completedOccurrences Occurrence[]            @relation("CompletedByUser")
+  uploadedFiles       FileObject[]             @relation("UploadedByUser")
+  approvedQuotes      SevaFile[]               @relation("QuoteApprovedByUser")
+  createdSevaFiles    SevaFile[]               @relation("SevaFileCreatedByUser")
+  comments            Comment[]
+  activityLogs        ActivityLog[]
+  notifications       Notification[]
+  createdRequests     SevaRequest[]            @relation("RequestedByUser")
+  createdTemplates    SevaTemplate[]
+
+  // Contractors module relations
+  createdContractors         Contractor[]           @relation("ContractorCreatedByUser")
+  verifiedCredentials        ContractorCredential[] @relation("CredentialVerifiedByUser")
+  contractorReviews          ContractorReview[]     @relation("ReviewAuthorUser")
+  createdSevaContractors     SevaContractor[]       @relation("SevaContractorCreatedByUser")
+  contractorRequests         ContractorRequest[]    @relation("ContractorRequestedByUser")
+  reviewedContractorRequests ContractorRequest[]    @relation("ContractorRequestReviewedByUser")
+
+  // Licences module relations
+  licences                UserLicence[]
+  verifiedLicences        UserLicence[]         @relation("LicenceVerifiedByUser")
+  availability            UserAvailability?
+  createdRequiredLicences SevaRequiredLicence[] @relation("RequiredLicenceCreatedByUser")
+
+  @@index([roleId])
+  @@index([isActive])
+  @@map("users")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  isSystem    Boolean  @default(false) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+model RolePermission {
+  id            String   @id @default(uuid()) @db.Uuid
+  roleId        String   @map("role_id") @db.Uuid
+  permissionKey String   @map("permission_key") @db.VarChar(100)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionKey])
+  @@index([permissionKey])
+  @@map("role_permissions")
+}
+
+model UserPermissionOverride {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  permissionKey String   @map("permission_key") @db.VarChar(100)
+  granted       Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permissionKey])
+  @@map("user_permission_overrides")
+}
+
+model Session {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  tokenHash  String   @unique @map("token_hash") @db.VarChar(128)
+  userAgent  String?  @map("user_agent") @db.VarChar(500)
+  ip         String?  @db.VarChar(100)
+  expiresAt  DateTime @map("expires_at")
+  lastSeenAt DateTime @default(now()) @map("last_seen_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ==========================================
+// SECTION 2: MASTERS (Categories, Areas, Tags)
+// ==========================================
+
+model Category {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  color       String   @default("#4f46e5") @db.VarChar(20)
+  icon        String?  @db.VarChar(50)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  sevas        Seva[]
+  sevaRequests SevaRequest[]
+  categoryTrades CategoryTrade[]
+
+  @@map("categories")
+}
+
+model Area {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(150)
+  parentId  String?  @map("parent_id") @db.Uuid
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  parent       Area?         @relation("AreaTree", fields: [parentId], references: [id], onDelete: Restrict)
+  children     Area[]        @relation("AreaTree")
+  sevas        Seva[]
+  sevaRequests SevaRequest[]
+
+  @@index([parentId])
+  @@map("areas")
+}
+
+model Tag {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @db.VarChar(50)
+  color     String   @default("#64748b") @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  sevaTags SevaTag[]
+
+  @@map("tags")
+}
+
+// ==========================================
+// SECTION 3: SEVA & OCCURRENCES
+// ==========================================
+
+enum SevaKind {
+  ONE_TIME
+  RECURRING
+}
+
+enum SevaSubKind {
+  NEW
+  REPAIR
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum ScheduleMode {
+  FIXED
+  FLOATING
+}
+
+enum OccurrenceStatus {
+  PENDING
+  IN_PROGRESS
+  NEEDS_VERIFICATION
+  DONE
+  SKIPPED
+  CANCELLED
+}
+
+enum RecurrenceFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+  EVERY_N_DAYS
+}
+
+model Seva {
+  id                   String        @id @default(uuid()) @db.Uuid
+  code                 String        @unique @db.VarChar(30)
+  title                String        @db.VarChar(255)
+  description          String        @db.Text
+  kind                 SevaKind      @default(ONE_TIME)
+  subKind              SevaSubKind?  @map("sub_kind")
+  categoryId           String        @map("category_id") @db.Uuid
+  areaId               String        @map("area_id") @db.Uuid
+  priority             Priority      @default(MEDIUM)
+  startDate            DateTime?     @map("start_date")
+  dueDate              DateTime?     @map("due_date")
+  scheduleMode         ScheduleMode  @default(FIXED) @map("schedule_mode")
+  requiresVerification Boolean       @default(false) @map("requires_verification")
+  estimatedBudget      Decimal?      @map("estimated_budget") @db.Decimal(12, 2)
+  approvedBudget       Decimal?      @map("approved_budget") @db.Decimal(12, 2)
+  parentId             String?       @map("parent_id") @db.Uuid
+  isGroup              Boolean       @default(false) @map("is_group")
+  path                 String        @db.VarChar(1000)
+  depth                Int           @default(0)
+  sortOrder            Int           @default(0) @map("sort_order")
+  version              Int           @default(1)
+  isArchived           Boolean       @default(false) @map("is_archived")
+  createdById          String?       @map("created_by_id") @db.Uuid
+  createdAt            DateTime      @default(now()) @map("created_at")
+  updatedAt            DateTime      @updatedAt @map("updated_at")
+
+  category        Category          @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  area            Area              @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  parent          Seva?             @relation("SevaHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children        Seva[]            @relation("SevaHierarchy")
+  assignees       SevaAssignee[]
+  watchers        SevaWatcher[]
+  tags            SevaTag[]
+  recurrenceRule  RecurrenceRule?
+  checklistItems  ChecklistItem[]
+  occurrences     Occurrence[]
+  files           SevaFile[]
+  convertedRequests SevaRequest[]
+  contractors       SevaContractor[]
+  contractorReviews ContractorReview[]
+  requiredLicences  SevaRequiredLicence[]
+
+  @@index([parentId])
+  @@index([path])
+  @@index([categoryId])
+  @@index([areaId])
+  @@index([priority])
+  @@index([kind])
+  @@index([isArchived])
+  @@index([isGroup])
+  @@map("sevas")
+}
+
+model SevaAssignee {
+  id           String    @id @default(uuid()) @db.Uuid
+  sevaId       String    @map("seva_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  isLead       Boolean   @default(false) @map("is_lead")
+  assignedAt   DateTime  @default(now()) @map("assigned_at")
+  assignedById String?   @map("assigned_by_id") @db.Uuid
+
+  seva       Seva  @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  user       User  @relation("AssigneeUser", fields: [userId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("AssignedByUser", fields: [assignedById], references: [id], onDelete: SetNull)
+
+  @@unique([sevaId, userId])
+  @@index([userId])
+  @@map("seva_assignees")
+}
+
+model SevaWatcher {
+  id        String   @id @default(uuid()) @db.Uuid
+  sevaId    String   @map("seva_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  seva Seva @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([sevaId, userId])
+  @@map("seva_watchers")
+}
+
+model SevaTag {
+  id     String @id @default(uuid()) @db.Uuid
+  sevaId String @map("seva_id") @db.Uuid
+  tagId  String @map("tag_id") @db.Uuid
+
+  seva Seva @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([sevaId, tagId])
+  @@map("seva_tags")
+}
+
+model RecurrenceRule {
+  id          String              @id @default(uuid()) @db.Uuid
+  sevaId      String              @unique @map("seva_id") @db.Uuid
+  frequency   RecurrenceFrequency
+  interval    Int                 @default(1)
+  byWeekday   Int[]               @map("by_weekday")
+  byMonthDay  Int[]               @map("by_month_day")
+  bySetPos    Int?                @map("by_set_pos")
+  startDate   DateTime            @map("start_date")
+  endDate     DateTime?           @map("end_date")
+  createdAt   DateTime            @default(now()) @map("created_at")
+  updatedAt   DateTime            @updatedAt @map("updated_at")
+
+  seva Seva @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+
+  @@map("recurrence_rules")
+}
+
+model ChecklistItem {
+  id        String   @id @default(uuid()) @db.Uuid
+  sevaId    String   @map("seva_id") @db.Uuid
+  text      String   @db.VarChar(500)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  seva                Seva                 @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  occurrenceChecklists OccurrenceChecklist[]
+
+  @@map("checklist_items")
+}
+
+model Occurrence {
+  id             String           @id @default(uuid()) @db.Uuid
+  sevaId         String           @map("seva_id") @db.Uuid
+  dueDate        DateTime         @map("due_date")
+  status         OccurrenceStatus @default(PENDING)
+  startedAt      DateTime?        @map("started_at")
+  completedAt    DateTime?        @map("completed_at")
+  completedById  String?          @map("completed_by_id") @db.Uuid
+  completionNote String?          @map("completion_note") @db.Text
+  skipReason     String?          @map("skip_reason") @db.Text
+  actualCost     Decimal?         @map("actual_cost") @db.Decimal(12, 2)
+  version        Int              @default(1)
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+
+  seva        Seva                  @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  completedBy User?                 @relation("CompletedByUser", fields: [completedById], references: [id], onDelete: SetNull)
+  checklists  OccurrenceChecklist[]
+  files       SevaFile[]
+
+  @@unique([sevaId, dueDate])
+  @@index([status])
+  @@index([dueDate])
+  @@map("occurrences")
+}
+
+model OccurrenceChecklist {
+  id              String    @id @default(uuid()) @db.Uuid
+  occurrenceId    String    @map("occurrence_id") @db.Uuid
+  checklistItemId String    @map("checklist_item_id") @db.Uuid
+  isCompleted     Boolean   @default(false) @map("is_completed")
+  completedAt     DateTime? @map("completed_at")
+  completedById   String?   @map("completed_by_id") @db.Uuid
+
+  occurrence    Occurrence    @relation(fields: [occurrenceId], references: [id], onDelete: Cascade)
+  checklistItem ChecklistItem @relation(fields: [checklistItemId], references: [id], onDelete: Cascade)
+
+  @@unique([occurrenceId, checklistItemId])
+  @@map("occurrence_checklists")
+}
+
+model SevaTemplate {
+  id           String   @id @default(uuid()) @db.Uuid
+  name         String   @unique @db.VarChar(150)
+  description  String?  @db.VarChar(500)
+  templateData Json     @map("template_data")
+  createdById  String?  @map("created_by_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@map("seva_templates")
+}
+
+// ==========================================
+// SECTION 4: FILES, QUOTES & ARTEFACTS
+// ==========================================
+
+enum FileScanStatus {
+  NOT_SCANNED
+  CLEAN
+  INFECTED
+}
+
+enum FileBucket {
+  QUOTE
+  ARTEFACT
+}
+
+enum ArtefactType {
+  PHOTO
+  DOCUMENT
+  INVOICE
+  VIDEO
+  OTHER
+}
+
+enum ArtefactStage {
+  BEFORE
+  AFTER
+  GENERAL
+}
+
+enum QuoteStatus {
+  RECEIVED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+model FileObject {
+  id           String         @id @default(uuid()) @db.Uuid
+  storageKey   String         @unique @map("storage_key") @db.VarChar(500)
+  originalName String         @map("original_name") @db.VarChar(255)
+  mimeType     String         @map("mime_type") @db.VarChar(100)
+  sizeBytes    BigInt         @map("size_bytes")
+  sha256       String         @db.VarChar(64)
+  width        Int?
+  height       Int?
+  thumbnailKey String?        @map("thumbnail_key") @db.VarChar(500)
+  uploadedById String?        @map("uploaded_by_id") @db.Uuid
+  scanStatus   FileScanStatus @default(NOT_SCANNED) @map("scan_status")
+  createdAt    DateTime       @default(now()) @map("created_at")
+  deletedAt    DateTime?      @map("deleted_at")
+
+  uploadedBy User?      @relation("UploadedByUser", fields: [uploadedById], references: [id], onDelete: SetNull)
+  sevaFiles  SevaFile[]
+  fileLinks  FileLink[]
+
+  @@index([sha256])
+  @@index([deletedAt])
+  @@map("file_objects")
+}
+
+model SevaFile {
+  id           String         @id @default(uuid()) @db.Uuid
+  sevaId       String         @map("seva_id") @db.Uuid
+  occurrenceId String?        @map("occurrence_id") @db.Uuid
+  fileObjectId String         @map("file_object_id") @db.Uuid
+  bucket       FileBucket     @default(ARTEFACT)
+  artefactType ArtefactType?  @map("artefact_type")
+  stage        ArtefactStage? @default(GENERAL)
+  caption      String?        @db.VarChar(500)
+  label        String?        @db.VarChar(100)
+  supplierName String?        @map("supplier_name") @db.VarChar(200)
+  amount       Decimal?       @db.Decimal(12, 2)
+  currency     String         @default("AUD") @db.VarChar(10)
+  validUntil   DateTime?      @map("valid_until")
+  quoteStatus  QuoteStatus?   @map("quote_status")
+  notes        String?        @db.Text
+  approvedById String?        @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime?      @map("approved_at")
+  createdById  String?        @map("created_by_id") @db.Uuid
+  createdAt    DateTime       @default(now()) @map("created_at")
+  deletedAt    DateTime?      @map("deleted_at")
+
+  seva         Seva        @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  occurrence   Occurrence? @relation(fields: [occurrenceId], references: [id], onDelete: SetNull)
+  fileObject   FileObject  @relation(fields: [fileObjectId], references: [id], onDelete: Cascade)
+  approvedBy   User?       @relation("QuoteApprovedByUser", fields: [approvedById], references: [id], onDelete: SetNull)
+  createdBy    User?       @relation("SevaFileCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+  contractorId String?     @map("contractor_id") @db.Uuid
+  contractor   Contractor? @relation(fields: [contractorId], references: [id], onDelete: SetNull)
+
+  @@index([contractorId])
+
+  @@index([sevaId, bucket])
+  @@index([occurrenceId])
+  @@index([deletedAt])
+  @@map("seva_files")
+}
+
+// Reserved for Phase 2 (Contractors & Licences modules)
+model FileLink {
+  id           String    @id @default(uuid()) @db.Uuid
+  fileObjectId String    @map("file_object_id") @db.Uuid
+  entityType   String    @map("entity_type") @db.VarChar(50)
+  entityId     String    @map("entity_id") @db.Uuid
+  kind         String    @db.VarChar(50)
+  label        String?   @db.VarChar(150)
+  expiresAt    DateTime? @map("expires_at")
+  createdById  String?   @map("created_by_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  fileObject FileObject @relation(fields: [fileObjectId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@map("file_links")
+}
+
+// ==========================================
+// SECTION 5: COMMENTS & ACTIVITY LOG
+// ==========================================
+
+model Comment {
+  id           String    @id @default(uuid()) @db.Uuid
+  entityType   String    @map("entity_type") @db.VarChar(50)
+  entityId     String    @map("entity_id") @db.Uuid
+  occurrenceId String?   @map("occurrence_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  body         String    @db.Text
+  editedAt     DateTime? @map("edited_at")
+  deletedAt    DateTime? @map("deleted_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@map("comments")
+}
+
+model ActivityLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  entityType   String   @map("entity_type") @db.VarChar(50)
+  entityId     String   @map("entity_id") @db.Uuid
+  occurrenceId String?  @map("occurrence_id") @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  action       String   @db.VarChar(100)
+  oldValue     Json?    @map("old_value")
+  newValue     Json?    @map("new_value")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+// ==========================================
+// SECTION 6: NOTIFICATIONS & REMINDERS
+// ==========================================
+
+model Notification {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  type       String    @db.VarChar(50)
+  title      String    @db.VarChar(200)
+  body       String    @db.Text
+  entityType String?   @map("entity_type") @db.VarChar(50)
+  entityId   String?   @map("entity_id") @db.Uuid
+  linkUrl    String?   @map("link_url") @db.VarChar(500)
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model Reminder {
+  id         String    @id @default(uuid()) @db.Uuid
+  entityType String    @map("entity_type") @db.VarChar(50)
+  entityId   String    @map("entity_id") @db.Uuid
+  remindAt   DateTime  @map("remind_at")
+  message    String    @db.VarChar(500)
+  audience   Json
+  sentAt     DateTime? @map("sent_at")
+  dedupeKey  String    @unique @map("dedupe_key") @db.VarChar(200)
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([remindAt, sentAt])
+  @@map("reminders")
+}
+
+// ==========================================
+// SECTION 7: SEVA REQUESTS & SETTINGS
+// ==========================================
+
+enum RequestStatus {
+  OPEN
+  CONVERTED
+  REJECTED
+}
+
+model SevaRequest {
+  id             String        @id @default(uuid()) @db.Uuid
+  title          String        @db.VarChar(255)
+  description    String        @db.Text
+  categoryId     String        @map("category_id") @db.Uuid
+  areaId         String        @map("area_id") @db.Uuid
+  requestedById  String        @map("requested_by_id") @db.Uuid
+  status         RequestStatus @default(OPEN)
+  convertedSevaId String?      @map("converted_seva_id") @db.Uuid
+  adminNote      String?       @map("admin_note") @db.Text
+  createdAt      DateTime      @default(now()) @map("created_at")
+  updatedAt      DateTime      @updatedAt @map("updated_at")
+
+  category      Category  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  area          Area      @relation(fields: [areaId], references: [id], onDelete: Restrict)
+  requestedBy   User      @relation("RequestedByUser", fields: [requestedById], references: [id], onDelete: Cascade)
+  convertedSeva Seva?     @relation(fields: [convertedSevaId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("seva_requests")
+}
+
+model Setting {
+  key       String   @id @db.VarChar(100)
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("settings")
+}
+
+// ==========================================
+// === MODULE: contractors ===
+// ==========================================
+
+enum ContractorStatus {
+  ACTIVE
+  INACTIVE
+  PENDING_APPROVAL
+  BLOCKED
+}
+
+enum CredentialKind {
+  LICENCE
+  INSURANCE
+  CERTIFICATION
+  OTHER
+}
+
+enum CredentialStatus {
+  VALID
+  EXPIRING_SOON
+  EXPIRED
+  PENDING_VERIFICATION
+  REVOKED
+}
+
+enum SevaContractorRole {
+  PRIMARY
+  SUBCONTRACTOR
+  CONSULTANT
+}
+
+enum SevaContractorStatus {
+  INVITED
+  QUOTED
+  ENGAGED
+  COMPLETED
+  CANCELLED
+}
+
+enum ContractorRequestType {
+  NEW_CONTRACTOR
+  UPDATE_CONTRACTOR
+}
+
+enum ContractorRequestStatus {
+  OPEN
+  APPROVED
+  PARTIALLY_APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+model Contractor {
+  id                  String           @id @default(uuid()) @db.Uuid
+  code                String           @unique @db.VarChar(30)
+  companyName         String           @map("company_name") @db.VarChar(255)
+  tradingName         String?          @map("trading_name") @db.VarChar(255)
+  registrationNumber  String?          @map("registration_number") @db.VarChar(100)
+  registrationType    String?          @map("registration_type") @db.VarChar(50)
+  gstRegistered       Boolean          @default(false) @map("gst_registered")
+  status              ContractorStatus @default(ACTIVE)
+  blockedReason       String?          @map("blocked_reason") @db.Text
+  isPreferred         Boolean          @default(false) @map("is_preferred")
+  website             String?          @db.VarChar(255)
+  mainPhone           String?          @map("main_phone") @db.VarChar(50)
+  mainEmail           String?          @map("main_email") @db.VarChar(255)
+  addressLine1        String?          @map("address_line1") @db.VarChar(255)
+  addressLine2        String?          @map("address_line2") @db.VarChar(255)
+  suburb              String?          @db.VarChar(100)
+  state               String?          @db.VarChar(50)
+  postcode            String?          @db.VarChar(20)
+  country             String           @default("AU") @db.VarChar(50)
+  serviceAreas        String[]         @default([]) @map("service_areas")
+  afterHoursAvailable Boolean          @default(false) @map("after_hours_available")
+  emergencyPhone      String?          @map("emergency_phone") @db.VarChar(50)
+  paymentTerms        String?          @map("payment_terms") @db.VarChar(100)
+  callOutFee          Decimal?         @map("call_out_fee") @db.Decimal(12, 2)
+  hourlyRate          Decimal?         @map("hourly_rate") @db.Decimal(12, 2)
+  currency            String           @default("AUD") @db.VarChar(10)
+  internalNotes       String?          @map("internal_notes") @db.Text
+  archivedAt          DateTime?        @map("archived_at")
+  version             Int              @default(1)
+  createdById         String?          @map("created_by_id") @db.Uuid
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  createdBy          User?                @relation("ContractorCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+  trades             ContractorTrade[]
+  contacts           ContractorContact[]
+  credentials        ContractorCredential[]
+  reviews            ContractorReview[]
+  sevas              SevaContractor[]
+  resultingRequests  ContractorRequest[]  @relation("ResultingContractor")
+  targetRequests     ContractorRequest[]  @relation("TargetContractor")
+  sevaFiles          SevaFile[]
+  tags               ContractorTag[]
+
+  @@index([companyName])
+  @@index([status])
+  @@index([registrationNumber])
+  @@index([isPreferred])
+  @@index([archivedAt])
+  @@map("contractors")
+}
+
+model Trade {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @unique @db.VarChar(100)
+  description String?  @db.VarChar(500)
+  isActive    Boolean  @default(true) @map("is_active")
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  contractors    ContractorTrade[]
+  categoryTrades CategoryTrade[]
+
+  @@map("trades")
+}
+
+model ContractorTrade {
+  contractorId String  @map("contractor_id") @db.Uuid
+  tradeId      String  @map("trade_id") @db.Uuid
+  isPrimary    Boolean @default(false) @map("is_primary")
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  trade      Trade      @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  @@id([contractorId, tradeId])
+  @@map("contractor_trades")
+}
+
+model CategoryTrade {
+  categoryId String @map("category_id") @db.Uuid
+  tradeId    String @map("trade_id") @db.Uuid
+
+  category Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  trade    Trade    @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  @@id([categoryId, tradeId])
+  @@map("category_trades")
+}
+
+model ContractorContact {
+  id           String   @id @default(uuid()) @db.Uuid
+  contractorId String   @map("contractor_id") @db.Uuid
+  name         String   @db.VarChar(255)
+  jobTitle     String?  @map("job_title") @db.VarChar(100)
+  phone        String?  @db.VarChar(50)
+  mobile       String?  @db.VarChar(50)
+  email        String?  @db.VarChar(255)
+  isPrimary    Boolean  @default(false) @map("is_primary")
+  notes        String?  @db.Text
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+
+  @@index([contractorId])
+  @@map("contractor_contacts")
+}
+
+model ContractorCredential {
+  id           String           @id @default(uuid()) @db.Uuid
+  contractorId String           @map("contractor_id") @db.Uuid
+  kind         CredentialKind
+  type         String           @db.VarChar(100)
+  issuer       String?          @db.VarChar(200)
+  number       String?          @db.VarChar(100)
+  coverAmount  Decimal?         @map("cover_amount") @db.Decimal(12, 2)
+  issuedAt     DateTime?        @map("issued_at")
+  expiresAt    DateTime?        @map("expires_at")
+  status       CredentialStatus @default(VALID)
+  verifiedById String?          @map("verified_by_id") @db.Uuid
+  verifiedAt   DateTime?        @map("verified_at")
+  notes        String?          @db.Text
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  verifiedBy User?      @relation("CredentialVerifiedByUser", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([contractorId])
+  @@index([expiresAt, status])
+  @@map("contractor_credentials")
+}
+
+model ContractorReview {
+  id               String    @id @default(uuid()) @db.Uuid
+  contractorId     String    @map("contractor_id") @db.Uuid
+  sevaId           String?   @map("seva_id") @db.Uuid
+  rating           Int
+  qualityRating    Int?      @map("quality_rating")
+  timelinessRating Int?      @map("timeliness_rating")
+  priceRating      Int?      @map("price_rating")
+  wouldUseAgain    Boolean   @default(true) @map("would_use_again")
+  comment          String?   @db.Text
+  reviewedById     String    @map("reviewed_by_id") @db.Uuid
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+  deletedAt        DateTime? @map("deleted_at")
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  seva       Seva?      @relation(fields: [sevaId], references: [id], onDelete: SetNull)
+  reviewedBy User       @relation("ReviewAuthorUser", fields: [reviewedById], references: [id], onDelete: Cascade)
+
+  @@index([contractorId])
+  @@index([deletedAt])
+  @@map("contractor_reviews")
+}
+
+model SevaContractor {
+  id            String               @id @default(uuid()) @db.Uuid
+  sevaId        String               @map("seva_id") @db.Uuid
+  contractorId  String               @map("contractor_id") @db.Uuid
+  role          SevaContractorRole   @default(PRIMARY)
+  scope         String?              @db.VarChar(500)
+  status        SevaContractorStatus @default(INVITED)
+  quotedAmount  Decimal?             @map("quoted_amount") @db.Decimal(12, 2)
+  finalAmount   Decimal?             @map("final_amount") @db.Decimal(12, 2)
+  invoiceNumber String?              @map("invoice_number") @db.VarChar(100)
+  invoicedAmount Decimal?            @map("invoiced_amount") @db.Decimal(12, 2)
+  invoicedAt    DateTime?            @map("invoiced_at")
+  paidAt        DateTime?            @map("paid_at")
+  engagedAt     DateTime?            @map("engaged_at")
+  completedAt   DateTime?            @map("completed_at")
+  createdById   String?              @map("created_by_id") @db.Uuid
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  seva       Seva       @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+  createdBy  User?      @relation("SevaContractorCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([sevaId, contractorId, role])
+  @@index([sevaId])
+  @@index([contractorId])
+  @@map("seva_contractors")
+}
+
+model ContractorRequest {
+  id                    String                  @id @default(uuid()) @db.Uuid
+  code                  String                  @unique @db.VarChar(30)
+  type                  ContractorRequestType
+  contractorId          String?                 @map("contractor_id") @db.Uuid
+  proposedData          Json                    @map("proposed_data")
+  note                  String?                 @db.VarChar(2000)
+  requestedById         String                  @map("requested_by_id") @db.Uuid
+  status                ContractorRequestStatus @default(OPEN)
+  reviewedById          String?                 @map("reviewed_by_id") @db.Uuid
+  reviewedAt            DateTime?               @map("reviewed_at")
+  reviewNote            String?                 @map("review_note") @db.Text
+  resultingContractorId String?                 @map("resulting_contractor_id") @db.Uuid
+  createdAt             DateTime                @default(now()) @map("created_at")
+  updatedAt             DateTime                @updatedAt @map("updated_at")
+
+  targetContractor    Contractor? @relation("TargetContractor", fields: [contractorId], references: [id], onDelete: SetNull)
+  resultingContractor Contractor? @relation("ResultingContractor", fields: [resultingContractorId], references: [id], onDelete: SetNull)
+  requestedBy         User        @relation("ContractorRequestedByUser", fields: [requestedById], references: [id], onDelete: Cascade)
+  reviewedBy          User?       @relation("ContractorRequestReviewedByUser", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([status, requestedById])
+  @@map("contractor_requests")
+}
+
+model ContractorTag {
+  id           String @id @default(uuid()) @db.Uuid
+  contractorId String @map("contractor_id") @db.Uuid
+  label        String @db.VarChar(50)
+
+  contractor Contractor @relation(fields: [contractorId], references: [id], onDelete: Cascade)
+
+  @@unique([contractorId, label])
+  @@index([label])
+  @@map("contractor_tags")
+}
+
+// ==========================================
+// === MODULE: licences ===
+// ==========================================
+
+enum LicenceKind {
+  LICENCE
+  TICKET
+  CERTIFICATE
+  COMPETENCY
+}
+
+enum UserLicenceStatus {
+  PENDING_VERIFICATION
+  VALID
+  EXPIRING_SOON
+  EXPIRED
+  SUSPENDED
+  REVOKED
+  REJECTED
+  SUPERSEDED
+}
+
+enum UserLicenceSource {
+  ADMIN_ENTERED
+  SELF_SUBMITTED
+  IMPORTED
+}
+
+enum UserAvailabilityStatus {
+  AVAILABLE
+  LIMITED
+  UNAVAILABLE
+}
+
+enum LicenceDocumentKind {
+  FRONT
+  BACK
+  PAGE
+  OTHER
+}
+
+model LicenceCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique @db.VarChar(100)
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  licenceTypes LicenceType[]
+
+  @@map("licence_categories")
+}
+
+model LicenceType {
+  id                    String      @id @default(uuid()) @db.Uuid
+  code                  String      @unique @db.VarChar(50)
+  name                  String      @db.VarChar(255)
+  categoryId            String      @map("category_id") @db.Uuid
+  kind                  LicenceKind @default(LICENCE)
+  issuer                String?     @db.VarChar(255)
+  aliases               String[]    @default([])
+  classes               String[]    @default([])
+  hasExpiry             Boolean     @default(true) @map("has_expiry")
+  defaultValidityMonths Int?        @map("default_validity_months")
+  requiresNumber        Boolean     @default(true) @map("requires_number")
+  isHighlySensitive     Boolean     @default(false) @map("is_highly_sensitive")
+  minHoldersTarget      Int?        @map("min_holders_target")
+  description           String?     @db.Text
+  isActive              Boolean     @default(true) @map("is_active")
+  sortOrder             Int         @default(0) @map("sort_order")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+
+  category        LicenceCategory       @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  userLicences    UserLicence[]
+  requiredOnSevas SevaRequiredLicence[]
+  snapshots       LicenceCountSnapshot[]
+
+  @@index([categoryId])
+  @@index([isActive])
+  @@map("licence_types")
+}
+
+model UserLicence {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  licenceTypeId   String            @map("licence_type_id") @db.Uuid
+  class           String?           @db.VarChar(50)
+  licenceNumber   String?           @map("licence_number") @db.VarChar(100)
+  issuer          String?           @db.VarChar(255)
+  issuedAt        DateTime?         @map("issued_at")
+  expiresAt       DateTime?         @map("expires_at")
+  conditions      String?           @db.Text
+  notes           String?           @db.Text
+  status          UserLicenceStatus @default(PENDING_VERIFICATION)
+  source          UserLicenceSource @default(ADMIN_ENTERED)
+  verifiedById    String?           @map("verified_by_id") @db.Uuid
+  verifiedAt      DateTime?         @map("verified_at")
+  rejectionReason String?           @map("rejection_reason") @db.Text
+  supersededById  String?           @map("superseded_by_id") @db.Uuid
+  archivedAt      DateTime?         @map("archived_at")
+  version         Int               @default(1)
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  licenceType    LicenceType   @relation(fields: [licenceTypeId], references: [id], onDelete: Restrict)
+  verifiedBy     User?         @relation("LicenceVerifiedByUser", fields: [verifiedById], references: [id], onDelete: SetNull)
+  supersededBy   UserLicence?  @relation("LicenceSupersede", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersededFrom UserLicence[] @relation("LicenceSupersede")
+
+  @@index([userId, status])
+  @@index([licenceTypeId, status, expiresAt])
+  @@map("user_licences")
+}
+
+model UserAvailability {
+  id             String                 @id @default(uuid()) @db.Uuid
+  userId         String                 @unique @map("user_id") @db.Uuid
+  status         UserAvailabilityStatus @default(AVAILABLE)
+  note           String?                @db.VarChar(200)
+  availableUntil DateTime?              @map("available_until")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_availabilities")
+}
+
+model SevaRequiredLicence {
+  id            String   @id @default(uuid()) @db.Uuid
+  sevaId        String   @map("seva_id") @db.Uuid
+  licenceTypeId String   @map("licence_type_id") @db.Uuid
+  classRequired String?  @map("class_required") @db.VarChar(50)
+  minHolders    Int      @default(1) @map("min_holders")
+  createdById   String?  @map("created_by_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  seva        Seva        @relation(fields: [sevaId], references: [id], onDelete: Cascade)
+  licenceType LicenceType @relation(fields: [licenceTypeId], references: [id], onDelete: Restrict)
+  createdBy   User?       @relation("RequiredLicenceCreatedByUser", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([sevaId, licenceTypeId, classRequired])
+  @@index([sevaId])
+  @@map("seva_required_licences")
+}
+
+model LicenceCountSnapshot {
+  id            String   @id @default(uuid()) @db.Uuid
+  takenOn       DateTime @map("taken_on") @db.Date
+  licenceTypeId String   @map("licence_type_id") @db.Uuid
+  validHolders  Int      @default(0) @map("valid_holders")
+  expiringSoon  Int      @default(0) @map("expiring_soon")
+  expired       Int      @default(0) @map("expired")
+  pending       Int      @default(0) @map("pending")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  licenceType LicenceType @relation(fields: [licenceTypeId], references: [id], onDelete: Cascade)
+
+  @@unique([takenOn, licenceTypeId])
+  @@index([licenceTypeId, takenOn])
+  @@map("licence_count_snapshots")
+}
+

@@ -1,0 +1,117 @@
+name: seva-maintenance
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: seva-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-seva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seva_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-seva_db}
+      TZ: ${TZ:-Australia/Adelaide}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - seva-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seva} -d ${POSTGRES_DB:-seva_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seva-app
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
+      UPLOAD_DIR: /app/data/uploads
+      NEXT_TELEMETRY_DISABLED: 1
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - seva-net
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: seva-worker
+    restart: unless-stopped
+    entrypoint: ["node", "dist/worker/index.js"]
+    command: []
+    healthcheck:
+      disable: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
+      UPLOAD_DIR: /app/data/uploads
+      NEXT_TELEMETRY_DISABLED: 1
+    volumes:
+      - ./data/uploads:/app/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    networks:
+      - seva-net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1024M
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: seva-caddy
+    restart: unless-stopped
+    profiles:
+      - https
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/caddy_data:/data
+      - ./data/caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - seva-net
+
+  antivirus:
+    image: clamav/clamav:stable_base
+    container_name: seva-clamav
+    restart: unless-stopped
+    profiles:
+      - antivirus
+    networks:
+      - seva-net
+
+networks:
+  seva-net:
+    driver: bridge

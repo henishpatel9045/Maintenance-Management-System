@@ -1,0 +1,56 @@
+export const PERMISSION_KEYS = [
+  "seva.read",
+  "seva.create",
+  "seva.update",
+  "seva.archive",
+  "seva.assign",
+  "occurrence.updateStatus",
+  "comments.create",
+  "artefacts.view",
+  "artefacts.upload",
+  "artefacts.manage",
+  "quotes.view",
+  "quotes.upload",
+  "quotes.manage",
+  "files.download",
+  "reports.view",
+  "requests.create",
+  "requests.manage",
+  "users.manage",
+  "masters.manage",
+  "settings.manage",
+  "audit.view",
+  // Contractors module permissions
+  "contractors.read",
+  "contractors.readFull",
+  "contractors.request",
+  "contractors.requests.review",
+  "contractors.write",
+  "contractors.credentials.view",
+  "contractors.credentials.manage",
+  "contractors.documents.view",
+  "contractors.documents.manage",
+  "contractors.reviews.write",
+  "contractors.assign",
+  "contractors.import",
+  "contractors.manage",
+  // Licences module permissions
+  "licences.own.view",
+  "licences.own.submit",
+  "licences.directory.view",
+  "licences.directory.contact",
+  "licences.manage",
+  "licences.verify",
+  "licences.sensitive.view",
+  "licences.documents.view",
+  "licences.types.manage",
+  "licences.seva.require",
+  "licences.reports.view",
+  "licences.import",
+] as const;
+
+export type PermissionKey = (typeof PERMISSION_KEYS)[number];
+
+export function isValidPermissionKey(key: string): key is PermissionKey {
+  return PERMISSION_KEYS.includes(key as PermissionKey);
+}

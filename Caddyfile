@@ -1,0 +1,29 @@
+{
+    # Global options
+    admin off
+}
+
+{$DOMAIN:localhost} {
+    # If using localhost or LAN IP, Caddy issues local internal TLS certificate
+    @isLocalhost `{host} == 'localhost' || {host} == '127.0.0.1'`
+    handle @isLocalhost {
+        tls internal
+    }
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "same-origin"
+        Permissions-Policy "camera=(self), microphone=(), geolocation=()"
+    }
+
+    # Reverse proxy to standalone Next.js container
+    reverse_proxy app:8080 {
+        header_up Host {host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+}

@@ -1,0 +1,63 @@
+name: seva-maintenance-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: seva-db-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-seva}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seva_dev_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-seva_db}
+      TZ: ${TZ:-Australia/Adelaide}
+    volumes:
+      - ./data/postgres_dev:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - seva-dev-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seva} -d ${POSTGRES_DB:-seva_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    image: node:20-alpine
+    container_name: seva-app-dev
+    working_dir: /app
+    command: ["sh", "-c", "npm install && npx prisma db push && npm run dev"]
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
+      UPLOAD_DIR: ./data/uploads
+      NEXT_TELEMETRY_DISABLED: 1
+      PORT: 8080
+      HOSTNAME: 0.0.0.0
+      SESSION_SECRET: dev_session_secret_32_characters_long_min!
+      ADMIN_PASSWORD: AdminDevPassword123!
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - seva-dev-net
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: seva-mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025" # Web UI
+      - "1025:1025" # SMTP
+    networks:
+      - seva-dev-net
+
+networks:
+  seva-dev-net:
+    driver: bridge
