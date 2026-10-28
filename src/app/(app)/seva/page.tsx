@@ -191,8 +191,41 @@ export default function SevaSheetPage() {
     },
   ];
 
-  const handleCsvExport = () => {
-    window.open("/api/v1/reports/export?format=csv", "_blank");
+  const [isExporting, setIsExporting] = useState(false);
+
+  const handleCsvExport = async () => {
+    setIsExporting(true);
+    try {
+      const params = new URLSearchParams({ format: "csv" });
+      if (selectedCategory) params.set("categoryId", selectedCategory);
+      if (selectedArea) params.set("areaId", selectedArea);
+      if (selectedPriority) params.set("priority", selectedPriority);
+      if (searchQuery) params.set("q", searchQuery);
+
+      const res = await fetch(`/api/v1/reports/export?${params.toString()}`);
+      if (!res.ok) {
+        throw new Error("Export failed");
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `seva-report-${format(new Date(), "yyyyMMdd-HHmmss")}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      // Direct navigation fallback if blob download fails
+      const params = new URLSearchParams({ format: "csv" });
+      if (selectedCategory) params.set("categoryId", selectedCategory);
+      if (selectedArea) params.set("areaId", selectedArea);
+      if (selectedPriority) params.set("priority", selectedPriority);
+      if (searchQuery) params.set("q", searchQuery);
+      window.open(`/api/v1/reports/export?${params.toString()}`, "_blank");
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   return (
@@ -240,7 +273,13 @@ export default function SevaSheetPage() {
             </button>
           </div>
 
-          <Button variant="outline" size="sm" onClick={handleCsvExport} icon={<Download className="w-3.5 h-3.5" />}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleCsvExport}
+            isLoading={isExporting}
+            icon={<Download className="w-3.5 h-3.5" />}
+          >
             Export CSV
           </Button>
 

@@ -24,6 +24,8 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "reset-password": "tsx scripts/reset-password.ts",
     "reset-admin": "tsx scripts/reset-password.ts",
+    "backup": "tsx scripts/backup.ts",
+    "restore": "tsx scripts/restore.ts",
     "smoke": "bash scripts/smoke-test.sh"
   },
   "dependencies": {
@@ -46,6 +48,7 @@
     "react-hook-form": "^7.54.2",
     "recharts": "^2.15.1",
     "sharp": "^0.33.5",
+    "unzipper": "^0.12.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -57,6 +60,7 @@
     "@types/pdfkit": "^0.13.9",
     "@types/react": "19.0.8",
     "@types/react-dom": "19.0.3",
+    "@types/unzipper": "^0.10.11",
     "autoprefixer": "^10.4.20",
     "esbuild": "^0.28.2",
     "eslint": "^9.20.1",
