@@ -3,9 +3,11 @@ set -e
 
 echo "[SEVA] Initializing Seva Maintenance System container..."
 
-# Ensure data uploads directory exists and is writable
+# Ensure data uploads and backup directories exist and are writable
 mkdir -p /app/data/uploads
 mkdir -p /app/data/uploads/seva
+mkdir -p /app/backups
+mkdir -p /app/backup
 
 # Run Prisma schema migration
 echo "[SEVA] Synchronizing database schema with Prisma..."

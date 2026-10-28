@@ -61,18 +61,22 @@ export default function DashboardPage() {
   const [areas, setAreas] = useState<any[]>([]);
 
   // Contractor widgets state
-  const { hasPermission } = useCurrentUser();
+  const { user, hasPermission } = useCurrentUser();
+  const isAdminOrCoordinator = user?.role === "ADMIN" || user?.role === "COORDINATOR";
+
   const canReadFullContractors = hasPermission("contractors.readFull");
   const canCredentialsView = hasPermission("contractors.credentials.view");
-  const canReviewRequests = hasPermission("contractors.requests.review");
+  const canReviewRequests = hasPermission("contractors.requests.review") || isAdminOrCoordinator;
 
   // Licences widgets state & permissions
-  const canLicenceDirectory = hasPermission("licences.directory.view");
-  const canLicenceVerify = hasPermission("licences.verify");
+  const canLicenceDirectory = hasPermission("licences.directory.view") || isAdminOrCoordinator;
+  const canLicenceVerify = hasPermission("licences.verify") || isAdminOrCoordinator;
 
   const [expiringCredentials, setExpiringCredentials] = useState<any[]>([]);
   const [topContractorsSpend, setTopContractorsSpend] = useState<any[]>([]);
   const [openRequestsCount, setOpenRequestsCount] = useState<number>(0);
+  const [openSevaRequestsCount, setOpenSevaRequestsCount] = useState<number>(0);
+  const [pendingLicencesCount, setPendingLicencesCount] = useState<number>(0);
 
   // Open lists
   const [needsAttention, setNeedsAttention] = useState<any[]>([]);
@@ -161,10 +165,24 @@ export default function DashboardPage() {
           .then((j) => setTopContractorsSpend((j.data?.byContractor || []).slice(0, 5)))
           .catch(() => {});
       }
-      if (canReviewRequests) {
-        fetch("/api/v1/contractor-requests?status=OPEN&limit=10")
+      if (canReviewRequests || isAdminOrCoordinator) {
+        fetch("/api/v1/contractor-requests?status=OPEN&limit=100")
           .then((r) => r.json())
           .then((j) => setOpenRequestsCount(j.data?.length || 0))
+          .catch(() => {});
+      }
+      if (isAdminOrCoordinator) {
+        fetch("/api/v1/requests")
+          .then((r) => r.json())
+          .then((j) => {
+            const open = (j.data || []).filter((req: any) => req.status === "OPEN");
+            setOpenSevaRequestsCount(open.length);
+          })
+          .catch(() => {});
+
+        fetch("/api/v1/licences/pending")
+          .then((r) => r.json())
+          .then((j) => setPendingLicencesCount(j.data?.length || 0))
           .catch(() => {});
       }
     } catch {
@@ -233,6 +251,86 @@ export default function DashboardPage() {
           setSelectedPriority("");
         }}
       />
+
+      {/* Management Action & Approval Hub for Admins & Coordinators */}
+      {isAdminOrCoordinator && (openSevaRequestsCount > 0 || openRequestsCount > 0 || pendingLicencesCount > 0) && (
+        <div className="p-4 bg-gradient-to-r from-amber-500/10 via-indigo-500/10 to-purple-500/10 border border-amber-200 dark:border-amber-900/60 rounded-2xl shadow-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="p-1.5 rounded-lg bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="w-4 h-4" />
+              </span>
+              <div>
+                <h3 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
+                  Pending Community Requests & Approvals
+                </h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  Review and verify submitted items before they become active in the system
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {/* Seva Requests */}
+            <Link
+              href="/requests"
+              className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 transition-all flex items-center justify-between group"
+            >
+              <div className="space-y-0.5">
+                <div className="text-[11px] font-semibold text-slate-500">Seva Maintenance Requests</div>
+                <div className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <span>{openSevaRequestsCount}</span>
+                  {openSevaRequestsCount > 0 ? (
+                    <Badge size="sm" variant="warning">Awaiting Conversion</Badge>
+                  ) : (
+                    <Badge size="sm" variant="neutral">All Clear</Badge>
+                  )}
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" />
+            </Link>
+
+            {/* Contractor Suggestions */}
+            <Link
+              href="/contractors/requests"
+              className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 transition-all flex items-center justify-between group"
+            >
+              <div className="space-y-0.5">
+                <div className="text-[11px] font-semibold text-slate-500">Contractor Proposals</div>
+                <div className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <span>{openRequestsCount}</span>
+                  {openRequestsCount > 0 ? (
+                    <Badge size="sm" variant="info">In Review Queue</Badge>
+                  ) : (
+                    <Badge size="sm" variant="neutral">All Clear</Badge>
+                  )}
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" />
+            </Link>
+
+            {/* Pending Licences */}
+            <Link
+              href="/licences?tab=verify"
+              className="p-3 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-500 transition-all flex items-center justify-between group"
+            >
+              <div className="space-y-0.5">
+                <div className="text-[11px] font-semibold text-slate-500">Volunteer Licences</div>
+                <div className="text-xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                  <span>{pendingLicencesCount}</span>
+                  {pendingLicencesCount > 0 ? (
+                    <Badge size="sm" variant="danger">Needs Verification</Badge>
+                  ) : (
+                    <Badge size="sm" variant="neutral">All Clear</Badge>
+                  )}
+                </div>
+              </div>
+              <ArrowRight className="w-4 h-4 text-slate-400 group-hover:text-indigo-600 group-hover:translate-x-0.5 transition-all" />
+            </Link>
+          </div>
+        </div>
+      )}
 
       {/* "My Seva" Quick Strip */}
       {mySevas.length > 0 && (

@@ -42,7 +42,12 @@ function loadEnv(): Record<string, string | undefined> {
 const config = loadEnv();
 const POSTGRES_USER = config.POSTGRES_USER || "seva";
 const POSTGRES_DB = config.POSTGRES_DB || "seva_maintenance";
-const UPLOADS_DIR = path.join(PROJECT_ROOT, "data", "uploads");
+const UPLOADS_DIR =
+  process.env.UPLOAD_DIR && fs.existsSync(process.env.UPLOAD_DIR)
+    ? process.env.UPLOAD_DIR
+    : (fs.existsSync(path.join(PROJECT_ROOT, "data", "uploads"))
+        ? path.join(PROJECT_ROOT, "data", "uploads")
+        : (fs.existsSync("/app/data/uploads") ? "/app/data/uploads" : path.join(PROJECT_ROOT, "data", "uploads")));
 
 // 2. Parse CLI Arguments
 interface BackupOptions {
@@ -53,19 +58,53 @@ interface BackupOptions {
 
 function parseArgs(): BackupOptions {
   const args = process.argv.slice(2);
-  let outDir = path.join(PROJECT_ROOT, "backups");
+  let defaultOutDir = process.env.BACKUP_DIR;
+  if (!defaultOutDir) {
+    if (fs.existsSync("/app/backups")) {
+      defaultOutDir = "/app/backups";
+    } else if (fs.existsSync("/app/backup")) {
+      defaultOutDir = "/app/backup";
+    } else {
+      defaultOutDir = path.join(PROJECT_ROOT, "backups");
+    }
+  }
+  let outDir = defaultOutDir;
   let keepCount = 30; // Keep last 30 backups by default
   let quiet = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg === "--out" || arg === "-o") {
-      outDir = path.resolve(process.cwd(), args[++i] || "");
+      outDir = args[++i] || "";
     } else if (arg === "--keep" || arg === "-k") {
       keepCount = parseInt(args[++i] || "30", 10) || 30;
     } else if (arg === "--quiet" || arg === "-q") {
       quiet = true;
     }
+  }
+
+  // Normalize outDir:
+  // If user passes "app/backup", "app/backups", "/app/backup", or "/app/backups"
+  const normalized = outDir.replace(/\\/g, "/").replace(/\/$/, "");
+  if (
+    normalized === "app/backup" ||
+    normalized === "app/backups" ||
+    normalized === "/app/backup" ||
+    normalized === "/app/backups" ||
+    normalized === "./backup" ||
+    normalized === "./backups" ||
+    normalized === "backup" ||
+    normalized === "backups"
+  ) {
+    if (fs.existsSync("/app/backups")) {
+      outDir = "/app/backups";
+    } else if (fs.existsSync("/app/backup")) {
+      outDir = "/app/backup";
+    } else {
+      outDir = path.join(PROJECT_ROOT, "backups");
+    }
+  } else if (!path.isAbsolute(outDir)) {
+    outDir = path.resolve(process.cwd(), outDir);
   }
 
   return { outDir, keepCount, quiet };
@@ -170,24 +209,86 @@ async function main() {
     console.log("------------------------------------------------------------------------");
   }
 
-  // Ensure output directory exists
-  fs.mkdirSync(outDir, { recursive: true });
-
-  const composeCmd = getDockerComposeCmd();
-
-  // 1. Check if database container is online
-  if (!quiet) console.log("[1/3] Verifying database connectivity & taking SQL dump...");
-  
-  let sqlDumpBuffer: Buffer;
+  // Ensure output directory exists with graceful fallback
+  let finalOutDir = outDir;
   try {
-    sqlDumpBuffer = execSync(
-      `${composeCmd} exec -T db pg_dump -U ${POSTGRES_USER} -d ${POSTGRES_DB} --clean --if-exists`,
-      { cwd: PROJECT_ROOT, maxBuffer: 500 * 1024 * 1024 }
-    );
-  } catch (err: any) {
-    console.error("\n[ERROR] Failed to dump PostgreSQL database!");
-    console.error("Please make sure the seva-db container is running: 'docker compose up -d db'\n");
-    process.exit(1);
+    fs.mkdirSync(finalOutDir, { recursive: true });
+  } catch (mkdirErr: any) {
+    const fallbacks = [
+      "/app/backups",
+      "/app/backup",
+      path.join(PROJECT_ROOT, "backups"),
+      path.join(PROJECT_ROOT, "data", "backups"),
+      "/tmp/backups",
+    ];
+    let resolved = false;
+    for (const fb of fallbacks) {
+      try {
+        fs.mkdirSync(fb, { recursive: true });
+        finalOutDir = fb;
+        resolved = true;
+        break;
+      } catch {}
+    }
+    if (!resolved) {
+      throw mkdirErr;
+    }
+  }
+
+  // 1. Check if database is online & take SQL dump
+  if (!quiet) console.log("[1/3] Verifying database connectivity & taking SQL dump...");
+
+  const isContainer =
+    fs.existsSync("/.dockerenv") ||
+    process.env.DATABASE_URL?.includes("@db:") ||
+    Boolean(process.env.DOCKER_CONTAINER);
+
+  let sqlDumpBuffer: Buffer;
+
+  if (isContainer) {
+    // Running inside Docker container: pg_dump connects directly to PostgreSQL
+    const dbHost = config.POSTGRES_HOST || "db";
+    const dbPort = config.POSTGRES_PORT || "5432";
+    const dbUser = POSTGRES_USER;
+    const dbName = POSTGRES_DB;
+    const dbPass = config.POSTGRES_PASSWORD || "seva_secure_db_pass_2026!";
+
+    try {
+      sqlDumpBuffer = execSync(
+        `pg_dump -h "${dbHost}" -p "${dbPort}" -U "${dbUser}" -d "${dbName}" --clean --if-exists`,
+        {
+          env: { ...process.env, PGPASSWORD: dbPass },
+          maxBuffer: 500 * 1024 * 1024,
+        }
+      );
+    } catch (err: any) {
+      console.error("\n[ERROR] Failed to dump PostgreSQL database inside container:", err.message);
+      process.exit(1);
+    }
+  } else {
+    // Running on host machine: use docker compose or local pg_dump
+    try {
+      const composeCmd = getDockerComposeCmd();
+      sqlDumpBuffer = execSync(
+        `${composeCmd} exec -T db pg_dump -U ${POSTGRES_USER} -d ${POSTGRES_DB} --clean --if-exists`,
+        { cwd: PROJECT_ROOT, maxBuffer: 500 * 1024 * 1024 }
+      );
+    } catch (composeErr: any) {
+      try {
+        const dbPass = config.POSTGRES_PASSWORD || "seva_secure_db_pass_2026!";
+        sqlDumpBuffer = execSync(
+          `pg_dump -h localhost -p 5432 -U ${POSTGRES_USER} -d ${POSTGRES_DB} --clean --if-exists`,
+          {
+            env: { ...process.env, PGPASSWORD: dbPass },
+            maxBuffer: 500 * 1024 * 1024,
+          }
+        );
+      } catch {
+        console.error("\n[ERROR] Failed to dump PostgreSQL database!");
+        console.error("Please make sure the seva-db container is running: 'docker compose up -d db'\n");
+        process.exit(1);
+      }
+    }
   }
 
   const sqlSizeBytes = sqlDumpBuffer.length;
@@ -225,7 +326,7 @@ async function main() {
 
   // 4. Create ZIP Archive
   const backupZipName = `seva_backup_${timestamp}.zip`;
-  const backupZipPath = path.join(outDir, backupZipName);
+  const backupZipPath = path.join(finalOutDir, backupZipName);
   if (!quiet) console.log(`[3/3] Creating complete portable ZIP archive: ${backupZipName}...`);
 
   await new Promise<void>((resolve, reject) => {
@@ -256,7 +357,7 @@ async function main() {
   const finalZipSize = fs.statSync(backupZipPath).size;
 
   // 5. Prune old backups
-  pruneOldBackups(outDir, keepCount, quiet);
+  pruneOldBackups(finalOutDir, keepCount, quiet);
 
   if (!quiet) {
     console.log("\n========================================================================");

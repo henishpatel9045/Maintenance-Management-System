@@ -44,8 +44,8 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
 # Set up required data directories
-RUN mkdir -p /app/data/uploads && \
-    chown -R nextjs:nodejs /app/data
+RUN mkdir -p /app/data/uploads /app/backups /app/backup && \
+    chown -R nextjs:nodejs /app/data /app/backups /app/backup
 
 # Copy built application artifacts
 COPY --from=builder /app/public ./public

@@ -37,6 +37,17 @@ export default function RequestsPage() {
   const [convertDueDate, setConvertDueDate] = useState("");
   const [isConverting, setIsConverting] = useState(false);
 
+  // Reject Modal
+  const [rejectingRequest, setRejectingRequest] = useState<any | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [isRejecting, setIsRejecting] = useState(false);
+
+  const formatDateSafe = (dateVal: any, formatStr = "dd MMM yyyy") => {
+    if (!dateVal) return "—";
+    const d = new Date(dateVal);
+    return isNaN(d.getTime()) ? "—" : format(d, formatStr);
+  };
+
   const loadRequests = async () => {
     setIsLoading(true);
     try {
@@ -119,6 +130,27 @@ export default function RequestsPage() {
     }
   };
 
+  const handleReject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectingRequest || !rejectReason.trim()) return;
+    setIsRejecting(true);
+    try {
+      const res = await fetch(`/api/v1/requests/${rejectingRequest.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: rejectReason.trim() }),
+      });
+      if (res.ok) {
+        setRejectingRequest(null);
+        setRejectReason("");
+        loadRequests();
+      }
+    } catch {
+    } finally {
+      setIsRejecting(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -156,19 +188,26 @@ export default function RequestsPage() {
                     {req.status}
                   </Badge>
                   <span className="text-[10px] text-slate-400">
-                    {format(new Date(req.createdAt), "dd MMM yyyy")}
+                    {formatDateSafe(req.createdAt)}
                   </span>
                 </div>
 
                 <div className="font-semibold text-sm text-slate-900 dark:text-slate-100">{req.title}</div>
                 <p className="text-xs text-slate-600 dark:text-slate-300 mt-1 line-clamp-2">{req.description}</p>
 
+                {req.adminNote && (
+                  <div className="mt-2 p-2 bg-slate-50 dark:bg-slate-800/60 rounded-lg border border-slate-100 dark:border-slate-800 text-xs">
+                    <span className="font-semibold text-slate-700 dark:text-slate-300">Manager Note:</span>{" "}
+                    <span className="text-slate-600 dark:text-slate-400">{req.adminNote}</span>
+                  </div>
+                )}
+
                 <div className="flex items-center gap-2 text-xs text-slate-500 mt-2">
                   <span>{req.category?.name}</span>
                   <span>•</span>
                   <span>{req.area?.name}</span>
                   <span>•</span>
-                  <span>By {req.requestedBy?.name}</span>
+                  <span>By {req.requestedBy?.name || "Community Member"}</span>
                 </div>
               </div>
 
@@ -181,11 +220,21 @@ export default function RequestsPage() {
                     View Task {req.convertedSeva.code} <ArrowRight className="w-3.5 h-3.5" />
                   </Link>
                 ) : req.status === "OPEN" ? (
-                  <Button size="sm" variant="primary" onClick={() => setSelectedRequest(req)}>
-                    Convert to Seva
-                  </Button>
+                  <div className="flex items-center gap-2 w-full justify-end">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-xs text-rose-600 hover:text-rose-700"
+                      onClick={() => setRejectingRequest(req)}
+                    >
+                      Decline
+                    </Button>
+                    <Button size="sm" variant="primary" onClick={() => setSelectedRequest(req)}>
+                      Convert to Seva
+                    </Button>
+                  </div>
                 ) : (
-                  <span className="text-xs text-slate-400">Archived</span>
+                  <span className="text-xs text-slate-400">Archived / Rejected</span>
                 )}
               </div>
             </div>
@@ -280,6 +329,39 @@ export default function RequestsPage() {
             </Button>
             <Button type="submit" variant="primary" size="sm" isLoading={isConverting}>
               Create Seva
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Decline Request Modal */}
+      <Modal
+        isOpen={Boolean(rejectingRequest)}
+        onClose={() => setRejectingRequest(null)}
+        title={`Decline Request: ${rejectingRequest?.title}`}
+      >
+        <form onSubmit={handleReject} className="space-y-3">
+          <p className="text-xs text-slate-500 mb-2">
+            Provide a reason or note explaining why this maintenance request cannot be converted into an active task. The submitter will receive this explanation.
+          </p>
+
+          <FormField label="Decline Reason / Explanation" required>
+            <textarea
+              rows={3}
+              required
+              placeholder="e.g. Issue has already been addressed under another task, or requires prior community approval..."
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              className={textareaClass}
+            />
+          </FormField>
+
+          <div className="flex justify-end gap-2 pt-3">
+            <Button type="button" variant="outline" size="sm" onClick={() => setRejectingRequest(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="danger" size="sm" isLoading={isRejecting}>
+              Decline Request
             </Button>
           </div>
         </form>

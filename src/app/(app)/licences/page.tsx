@@ -54,7 +54,8 @@ export default function LicencesPage() {
         const res = await fetch("/api/v1/auth/me");
         if (res.ok) {
           const json = await res.json();
-          setCurrentUser(json.data);
+          const userObj = json.data?.user || json.data;
+          setCurrentUser(userObj);
         }
       } catch (e) {
         console.error("Failed to load user:", e);
@@ -65,17 +66,20 @@ export default function LicencesPage() {
     loadUser();
   }, []);
 
+  const isAdmin = currentUser?.role === "ADMIN";
+  const isCoordinator = currentUser?.role === "COORDINATOR";
+
   const perms = useMemo(() => {
     return new Set<string>(currentUser?.permissions || []);
   }, [currentUser]);
 
-  const canDirectoryView = perms.has("licences.directory.view") || perms.has("licences.manage");
-  const canVerify = perms.has("licences.verify");
-  const canTypesManage = perms.has("licences.types.manage");
-  const canImport = perms.has("licences.import");
-  const canDirectoryContact = perms.has("licences.directory.contact") || perms.has("licences.manage");
-  const canSensitiveView = perms.has("licences.sensitive.view");
-  const canReportsView = perms.has("licences.reports.view");
+  const canDirectoryView = isAdmin || isCoordinator || perms.has("licences.directory.view") || perms.has("licences.manage");
+  const canVerify = isAdmin || isCoordinator || perms.has("licences.verify") || perms.has("licences.manage");
+  const canTypesManage = isAdmin || isCoordinator || perms.has("licences.types.manage") || perms.has("licences.manage");
+  const canImport = isAdmin || isCoordinator || perms.has("licences.import") || perms.has("licences.manage");
+  const canDirectoryContact = isAdmin || isCoordinator || perms.has("licences.directory.contact") || perms.has("licences.manage");
+  const canSensitiveView = isAdmin || isCoordinator || perms.has("licences.sensitive.view") || perms.has("licences.manage");
+  const canReportsView = isAdmin || isCoordinator || perms.has("licences.reports.view") || perms.has("licences.manage");
 
   // Sync tab with URL
   const switchTab = (tab: string) => {

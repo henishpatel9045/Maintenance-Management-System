@@ -31,6 +31,11 @@ export function can(
     return false;
   }
 
+  // Admin has full superuser authority across all modules
+  if (user.role === "ADMIN") {
+    return true;
+  }
+
   const isCoordinator = user.role === "COORDINATOR";
   const isMember = user.role === "MEMBER";
 
@@ -41,7 +46,7 @@ export function can(
 
   const settings = user.settings ?? {};
 
-  // Dynamic coordinator licences management toggle
+  // Coordinator licences management & verification capability (when enabled via settings)
   if (
     isCoordinator &&
     Boolean(settings["coordinatorsCanManageLicences"]) &&

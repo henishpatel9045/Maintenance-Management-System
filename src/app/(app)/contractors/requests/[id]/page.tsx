@@ -49,6 +49,12 @@ export default function ContractorRequestDetailPage({ params }: { params: Promis
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  const formatDateSafe = (dateVal: any, formatStr = "dd MMM yyyy, HH:mm") => {
+    if (!dateVal) return "—";
+    const d = new Date(dateVal);
+    return isNaN(d.getTime()) ? "—" : format(d, formatStr);
+  };
+
   const loadRequest = async () => {
     setIsLoading(true);
     try {
@@ -58,18 +64,42 @@ export default function ContractorRequestDetailPage({ params }: { params: Promis
         return;
       }
       const j = await res.json();
-      setRequest(j.data);
-      if (j.comparison) {
-        setComparison(j.comparison);
-        // Default accept all proposed diff fields
+      const raw = j.data;
+      const actualRequest = raw?.request || raw;
+      const actualFiles = raw?.files || actualRequest?.files || [];
+      const actualDiff = raw?.diff || null;
+      const actualConflict = raw?.versionConflict || false;
+
+      let comparisonObj: any = null;
+      if (actualDiff) {
+        const differences = Object.entries(actualDiff).map(([field, val]: [string, any]) => ({
+          field,
+          currentValue: val.current,
+          proposedValue: val.proposed,
+          changed: val.changed,
+        }));
+        comparisonObj = {
+          differences,
+          hasConflict: actualConflict,
+        };
+      } else if (j.comparison) {
+        comparisonObj = j.comparison;
+      }
+
+      setRequest({
+        ...actualRequest,
+        files: actualFiles,
+      });
+      setComparison(comparisonObj);
+      if (comparisonObj?.differences) {
         const initialAccept: Record<string, boolean> = {};
-        j.comparison.differences?.forEach((d: any) => {
+        comparisonObj.differences.forEach((d: any) => {
           initialAccept[d.field] = true;
         });
         setAcceptedFields(initialAccept);
       }
-      if (j.data.type === "NEW_CONTRACTOR") {
-        setNewContractorForm(j.data.proposedData || {});
+      if (actualRequest?.type === "NEW_CONTRACTOR") {
+        setNewContractorForm(actualRequest.proposedData || {});
       }
     } catch {
       setError("Network error loading request.");
@@ -271,7 +301,7 @@ export default function ContractorRequestDetailPage({ params }: { params: Promis
           </div>
           <div className="flex items-center gap-2 text-slate-400">
             <Clock className="w-4 h-4" />
-            <span>{format(new Date(request.createdAt), "dd MMM yyyy, HH:mm")}</span>
+            <span>{formatDateSafe(request.createdAt)}</span>
           </div>
         </div>
 

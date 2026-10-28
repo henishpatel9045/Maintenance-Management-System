@@ -12,6 +12,7 @@ services:
       TZ: ${TZ:-Australia/Adelaide}
     volumes:
       - ./data/postgres_dev:/var/lib/postgresql/data
+      
     ports:
       - "5432:5432"
     networks:

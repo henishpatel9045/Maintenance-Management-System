@@ -118,10 +118,13 @@ export async function validateSession(token: string): Promise<{
     }
   }
 
-  // Coordinators have masters.manage and seva.assign for task assignment
+  // Coordinators have masters.manage, seva.assign, licences verification, and contractor review capabilities
   if (session.user.role.name === "COORDINATOR") {
     permissions.add("masters.manage");
     permissions.add("seva.assign");
+    permissions.add("licences.verify");
+    permissions.add("licences.manage");
+    permissions.add("contractors.requests.review");
   }
 
   // Load settings map

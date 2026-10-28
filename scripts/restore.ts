@@ -44,7 +44,12 @@ function loadEnv(): Record<string, string | undefined> {
 const config = loadEnv();
 const POSTGRES_USER = config.POSTGRES_USER || "seva";
 const POSTGRES_DB = config.POSTGRES_DB || "seva_maintenance";
-const TARGET_UPLOADS_DIR = path.join(PROJECT_ROOT, "data", "uploads");
+const TARGET_UPLOADS_DIR =
+  process.env.UPLOAD_DIR && fs.existsSync(process.env.UPLOAD_DIR)
+    ? process.env.UPLOAD_DIR
+    : (fs.existsSync(path.join(PROJECT_ROOT, "data", "uploads"))
+        ? path.join(PROJECT_ROOT, "data", "uploads")
+        : (fs.existsSync("/app/data/uploads") ? "/app/data/uploads" : path.join(PROJECT_ROOT, "data", "uploads")));
 
 // 2. Parse CLI Arguments
 interface RestoreOptions {
@@ -133,19 +138,32 @@ function countFiles(dir: string): number {
 
 // 6. Find latest backup if none specified
 function findLatestBackup(): string | null {
-  const backupDir = path.join(PROJECT_ROOT, "backups");
-  if (!fs.existsSync(backupDir)) return null;
+  const candidateDirs = [
+    process.env.BACKUP_DIR,
+    "/app/backups",
+    "/app/backup",
+    path.join(PROJECT_ROOT, "backups"),
+    path.join(PROJECT_ROOT, "data", "backups"),
+  ].filter(Boolean) as string[];
 
-  const files = fs.readdirSync(backupDir)
-    .filter((f) => f.endsWith(".zip"))
-    .map((f) => ({
-      name: f,
-      fullPath: path.join(backupDir, f),
-      time: fs.statSync(path.join(backupDir, f)).mtimeMs,
-    }))
-    .sort((a, b) => b.time - a.time);
+  for (const backupDir of candidateDirs) {
+    if (!fs.existsSync(backupDir)) continue;
 
-  return files.length > 0 && files[0] ? files[0].fullPath : null;
+    const files = fs.readdirSync(backupDir)
+      .filter((f) => f.endsWith(".zip"))
+      .map((f) => ({
+        name: f,
+        fullPath: path.join(backupDir, f),
+        time: fs.statSync(path.join(backupDir, f)).mtimeMs,
+      }))
+      .sort((a, b) => b.time - a.time);
+
+    if (files.length > 0 && files[0]) {
+      return files[0].fullPath;
+    }
+  }
+
+  return null;
 }
 
 async function main() {
@@ -163,7 +181,21 @@ async function main() {
     targetZip = latest;
   }
 
-  const resolvedZipPath = path.resolve(process.cwd(), targetZip);
+  let resolvedZipPath = path.resolve(process.cwd(), targetZip);
+  if (!fs.existsSync(resolvedZipPath)) {
+    const candidatePaths = [
+      path.join(PROJECT_ROOT, targetZip),
+      path.join("/app/backups", path.basename(targetZip)),
+      path.join("/app/backup", path.basename(targetZip)),
+      path.join(PROJECT_ROOT, "backups", path.basename(targetZip)),
+    ];
+    for (const cp of candidatePaths) {
+      if (fs.existsSync(cp)) {
+        resolvedZipPath = cp;
+        break;
+      }
+    }
+  }
 
   if (!fs.existsSync(resolvedZipPath)) {
     console.error(`\n[ERROR] Backup file not found: ${resolvedZipPath}\n`);
@@ -242,11 +274,14 @@ async function main() {
       }
     }
 
-    const composeCmd = getDockerComposeCmd();
+    const isContainer =
+      fs.existsSync("/.dockerenv") ||
+      process.env.DATABASE_URL?.includes("@db:") ||
+      Boolean(process.env.DOCKER_CONTAINER);
 
     // 4. Restore Uploaded Files
     if (!options.dbOnly) {
-      console.log("\n[2/4] Restoring uploaded files & assets to host directory...");
+      console.log("\n[2/4] Restoring uploaded files & assets to target directory...");
       const extractedUploadsDir = path.join(tempExtractDir, "uploads");
 
       if (fs.existsSync(extractedUploadsDir)) {
@@ -254,7 +289,7 @@ async function main() {
         fs.mkdirSync(TARGET_UPLOADS_DIR, { recursive: true });
         copyDirectoryRecursive(extractedUploadsDir, TARGET_UPLOADS_DIR);
         const restoredCount = countFiles(TARGET_UPLOADS_DIR);
-        console.log(`  ✓ Uploads restored to ${TARGET_UPLOADS_DIR} (${restoredCount} total files on host disk)`);
+        console.log(`  ✓ Uploads restored to ${TARGET_UPLOADS_DIR} (${restoredCount} total files on disk)`);
       } else {
         console.log("  ✓ No uploads folder in backup archive; skipped.");
       }
@@ -266,76 +301,136 @@ async function main() {
     if (!options.uploadsOnly) {
       console.log("\n[3/4] Restoring PostgreSQL database from SQL dump...");
 
-      // Check database readiness
-      try {
-        execSync(`${composeCmd} exec -T db pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}`, {
-          cwd: PROJECT_ROOT,
-          stdio: "ignore",
-        });
-      } catch {
-        throw new Error(`Database container (db) is not ready. Run: ${composeCmd} up -d db`);
-      }
+      if (isContainer) {
+        // Inside container: stream database.sql directly into psql
+        const dbHost = config.POSTGRES_HOST || "db";
+        const dbPort = config.POSTGRES_PORT || "5432";
+        const dbUser = POSTGRES_USER;
+        const dbName = POSTGRES_DB;
+        const dbPass = config.POSTGRES_PASSWORD || "seva_secure_db_pass_2026!";
 
-      // Stream database.sql into psql
-      await new Promise<void>((resolve, reject) => {
-        const sqlStream = fs.createReadStream(sqlPath);
-        const [binary, ...extraArgs] = composeCmd.split(" ");
-        const psqlProcess = spawn(
-          binary || "docker",
-          [
-            ...extraArgs,
-            "exec",
-            "-T",
-            "db",
+        await new Promise<void>((resolve, reject) => {
+          const sqlStream = fs.createReadStream(sqlPath);
+          const psqlProcess = spawn(
             "psql",
-            "-U",
-            POSTGRES_USER,
-            "-d",
-            POSTGRES_DB,
-          ],
-          { cwd: PROJECT_ROOT, stdio: ["pipe", "pipe", "pipe"] }
-        );
+            ["-h", dbHost, "-p", dbPort, "-U", dbUser, "-d", dbName],
+            {
+              env: { ...process.env, PGPASSWORD: dbPass },
+              stdio: ["pipe", "pipe", "pipe"],
+            }
+          );
 
-        let stderrData = "";
-        psqlProcess.stderr?.on("data", (chunk: Buffer) => {
-          stderrData += chunk.toString();
-        });
+          let stderrData = "";
+          psqlProcess.stderr?.on("data", (chunk: Buffer) => {
+            stderrData += chunk.toString();
+          });
 
-        psqlProcess.on("close", (code: number | null) => {
-          if (code === 0) {
-            resolve();
+          psqlProcess.on("close", (code: number | null) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`psql exited with code ${code}: ${stderrData}`));
+            }
+          });
+
+          psqlProcess.on("error", (err: Error) => reject(err));
+
+          if (psqlProcess.stdin) {
+            sqlStream.pipe(psqlProcess.stdin);
           } else {
-            // Some notices/warnings are normal during --clean DROP, but exit code non-zero is an error
-            reject(new Error(`psql exited with code ${code}: ${stderrData}`));
+            reject(new Error("Unable to open stdin on psql process"));
           }
         });
 
-        psqlProcess.on("error", (err: Error) => reject(err));
+        console.log("  ✓ PostgreSQL database restored successfully.");
 
-        if (psqlProcess.stdin) {
-          sqlStream.pipe(psqlProcess.stdin);
-        } else {
-          reject(new Error("Unable to open stdin on psql process"));
+        // 6. Verify database contents
+        console.log("\n[4/4] Verifying database integrity...");
+        try {
+          const userCountOut = execSync(
+            `psql -h "${dbHost}" -p "${dbPort}" -U "${dbUser}" -d "${dbName}" -t -c "SELECT count(*) FROM users;"`,
+            { env: { ...process.env, PGPASSWORD: dbPass }, encoding: "utf8" }
+          ).trim();
+          const sevaCountOut = execSync(
+            `psql -h "${dbHost}" -p "${dbPort}" -U "${dbUser}" -d "${dbName}" -t -c "SELECT count(*) FROM sevas;"`,
+            { env: { ...process.env, PGPASSWORD: dbPass }, encoding: "utf8" }
+          ).trim();
+          console.log(`  ✓ Database verified: ${userCountOut} users, ${sevaCountOut} sevas online.`);
+        } catch {
+          console.log("  ✓ Database tables restored.");
         }
-      });
+      } else {
+        const composeCmd = getDockerComposeCmd();
+        // Check database readiness
+        try {
+          execSync(`${composeCmd} exec -T db pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}`, {
+            cwd: PROJECT_ROOT,
+            stdio: "ignore",
+          });
+        } catch {
+          throw new Error(`Database container (db) is not ready. Run: ${composeCmd} up -d db`);
+        }
 
-      console.log("  ✓ PostgreSQL database restored successfully.");
+        // Stream database.sql into psql
+        await new Promise<void>((resolve, reject) => {
+          const sqlStream = fs.createReadStream(sqlPath);
+          const [binary, ...extraArgs] = composeCmd.split(" ");
+          const psqlProcess = spawn(
+            binary || "docker",
+            [
+              ...extraArgs,
+              "exec",
+              "-T",
+              "db",
+              "psql",
+              "-U",
+              POSTGRES_USER,
+              "-d",
+              POSTGRES_DB,
+            ],
+            { cwd: PROJECT_ROOT, stdio: ["pipe", "pipe", "pipe"] }
+          );
 
-      // 6. Verify database contents
-      console.log("\n[4/4] Verifying database integrity...");
-      try {
-        const userCountOut = execSync(
-          `${composeCmd} exec -T db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -t -c "SELECT count(*) FROM users;"`,
-          { cwd: PROJECT_ROOT, encoding: "utf8" }
-        ).trim();
-        const sevaCountOut = execSync(
-          `${composeCmd} exec -T db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -t -c "SELECT count(*) FROM sevas;"`,
-          { cwd: PROJECT_ROOT, encoding: "utf8" }
-        ).trim();
+          let stderrData = "";
+          psqlProcess.stderr?.on("data", (chunk: Buffer) => {
+            stderrData += chunk.toString();
+          });
 
-        console.log(`  ✓ Database verified: ${userCountOut} users, ${sevaCountOut} sevas online.`);
-      } catch {
-        console.log("  ✓ Database tables restored.");
+          psqlProcess.on("close", (code: number | null) => {
+            if (code === 0) {
+              resolve();
+            } else {
+              reject(new Error(`psql exited with code ${code}: ${stderrData}`));
+            }
+          });
+
+          psqlProcess.on("error", (err: Error) => reject(err));
+
+          if (psqlProcess.stdin) {
+            sqlStream.pipe(psqlProcess.stdin);
+          } else {
+            reject(new Error("Unable to open stdin on psql process"));
+          }
+        });
+
+        console.log("  ✓ PostgreSQL database restored successfully.");
+
+        // 6. Verify database contents
+        console.log("\n[4/4] Verifying database integrity...");
+        try {
+          const userCountOut = execSync(
+            `${composeCmd} exec -T db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -t -c "SELECT count(*) FROM users;"`,
+            { cwd: PROJECT_ROOT, encoding: "utf8" }
+          ).trim();
+          const sevaCountOut = execSync(
+            `${composeCmd} exec -T db psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -t -c "SELECT count(*) FROM sevas;"`,
+            { cwd: PROJECT_ROOT, encoding: "utf8" }
+          ).trim();
+
+          console.log(`  ✓ Database verified: ${userCountOut} users, ${sevaCountOut} sevas online.`);
+        } catch {
+          console.log("  ✓ Database tables restored.");
+        }
       }
     } else {
       console.log("\n[3/4] Skipping database restoration (--uploads-only requested).");

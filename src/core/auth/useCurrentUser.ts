@@ -30,6 +30,17 @@ export function useCurrentUser() {
   const hasPermission = (key: string) => {
     if (!user) return false;
     if (user.role === "ADMIN") return true;
+    if (user.role === "COORDINATOR") {
+      if (
+        key === "licences.verify" ||
+        key === "licences.manage" ||
+        key === "masters.manage" ||
+        key === "seva.assign" ||
+        key === "contractors.requests.review"
+      ) {
+        return true;
+      }
+    }
     return user.permissions.includes(key);
   };
 

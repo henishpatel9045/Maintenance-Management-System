@@ -116,17 +116,22 @@ export function AppShell({ user, children }: AppShellProps) {
     { label: "File Library", href: "/files", icon: <FolderTree className="w-4 h-4" /> },
     { label: "Requests", href: "/requests", icon: <FileQuestion className="w-4 h-4" /> },
     { label: "Reports", href: "/reports", icon: <FileBarChart2 className="w-4 h-4" /> },
-    ...(user.settings?.["module.contractors.enabled"] !== false && user.permissions.has("contractors.read")
+    ...(user.settings?.["module.contractors.enabled"] !== false &&
+    (user.role === "ADMIN" || user.role === "COORDINATOR" || user.permissions.has("contractors.read"))
       ? [{ label: "Contractors", href: "/contractors", icon: <Briefcase className="w-4 h-4" /> }]
       : []),
     ...(user.settings?.["module.licences.enabled"] !== false &&
-    (user.permissions.has("licences.own.view") || user.permissions.has("licences.directory.view") || user.permissions.has("licences.manage"))
+    (user.role === "ADMIN" ||
+      user.role === "COORDINATOR" ||
+      user.permissions.has("licences.own.view") ||
+      user.permissions.has("licences.directory.view") ||
+      user.permissions.has("licences.manage"))
       ? [{ label: "Licences", href: "/licences", icon: <Award className="w-4 h-4" /> }]
       : []),
-    ...(user.permissions.has("masters.manage") || user.role === "COORDINATOR" || user.role === "ADMIN"
+    ...(user.role === "ADMIN" || user.role === "COORDINATOR" || user.permissions.has("masters.manage")
       ? [{ label: "Areas", href: "/areas", icon: <MapPin className="w-4 h-4" /> }]
       : []),
-    ...(user.permissions.has("users.manage") || user.permissions.has("settings.manage")
+    ...(user.role === "ADMIN" || user.permissions.has("users.manage") || user.permissions.has("settings.manage")
       ? [{ label: "Admin", href: "/admin", icon: <Shield className="w-4 h-4" /> }]
       : []),
   ];

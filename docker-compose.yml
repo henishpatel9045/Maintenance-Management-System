@@ -17,7 +17,7 @@ services:
     networks:
       - seva-net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seva} -d ${POSTGRES_DB:-seva_db}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seva} -d ${POSTGRES_DB:-seva_db}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -35,9 +35,12 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
       UPLOAD_DIR: /app/data/uploads
+      BACKUP_DIR: /app/backups
       NEXT_TELEMETRY_DISABLED: 1
     volumes:
       - ./data/uploads:/app/data/uploads
+      - ./backups:/app/backups
+      - ./backups:/app/backup
     ports:
       - "${APP_PORT:-8080}:8080"
     depends_on:
@@ -57,7 +60,7 @@ services:
       dockerfile: Dockerfile
     container_name: seva-worker
     restart: unless-stopped
-    entrypoint: ["node", "dist/worker/index.js"]
+    entrypoint: [ "node", "dist/worker/index.js" ]
     command: []
     healthcheck:
       disable: true
@@ -67,9 +70,12 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
       UPLOAD_DIR: /app/data/uploads
+      BACKUP_DIR: /app/backups
       NEXT_TELEMETRY_DISABLED: 1
     volumes:
       - ./data/uploads:/app/data/uploads
+      - ./backups:/app/backups
+      - ./backups:/app/backup
     depends_on:
       db:
         condition: service_healthy
