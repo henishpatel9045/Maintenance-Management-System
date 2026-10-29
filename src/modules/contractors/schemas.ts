@@ -213,7 +213,31 @@ export const createSevaContractorSchema = z
   })
   .strict();
 
+export const syncSevaContractorItemSchema = z
+  .object({
+    contractorId: z.string().uuid("Valid contractor ID required"),
+    role: z.nativeEnum(SevaContractorRole).optional().default(SevaContractorRole.PRIMARY),
+    scope: z.string().trim().max(500).optional().nullable(),
+    status: z.nativeEnum(SevaContractorStatus).optional().default(SevaContractorStatus.INVITED),
+    quotedAmount: z.coerce.number().min(0).optional().nullable(),
+    finalAmount: z.coerce.number().min(0).optional().nullable(),
+    invoiceNumber: z.string().trim().max(100).optional().nullable(),
+    invoicedAmount: z.coerce.number().min(0).optional().nullable(),
+    invoicedAt: z.union([z.string(), z.date()]).optional().nullable(),
+    paidAt: z.union([z.string(), z.date()]).optional().nullable(),
+    confirmWarning: z.boolean().optional().default(true),
+  })
+  .passthrough();
+
+export const syncSevaContractorsSchema = z
+  .object({
+    contractors: z.array(syncSevaContractorItemSchema),
+  })
+  .passthrough();
+
 export const updateSevaContractorSchema = createSevaContractorSchema.partial().strict();
+export type SyncSevaContractorItemInput = z.input<typeof syncSevaContractorItemSchema>;
+export type SyncSevaContractorsInput = z.input<typeof syncSevaContractorsSchema>;
 
 export const createContractorRequestSchema = z
   .object({

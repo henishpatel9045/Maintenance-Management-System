@@ -282,6 +282,60 @@ export class SevaContractorService {
   }
 
   /**
+   * Synchronize the complete list of contractors linked to a seva task (add, update, remove).
+   */
+  public static async syncContractorsForSeva(
+    sevaId: string,
+    contractors: Array<any>,
+    userId: string
+  ) {
+    const seva = await db.seva.findUnique({ where: { id: sevaId } });
+    if (!seva) throw new AppError(404, "NOT_FOUND", "Seva task not found");
+
+    const existingLinks = await db.sevaContractor.findMany({
+      where: { sevaId },
+    });
+
+    const incomingKeys = new Set(
+      contractors.map((c) => `${c.contractorId}:${c.role || SevaContractorRole.PRIMARY}`)
+    );
+
+    // Remove any links not present in incoming list
+    const toRemove = existingLinks.filter(
+      (l) => !incomingKeys.has(`${l.contractorId}:${l.role}`)
+    );
+
+    for (const rem of toRemove) {
+      await this.removeLink(rem.id, userId);
+    }
+
+    // Upsert each incoming link
+    const updated = [];
+    for (const item of contractors) {
+      const link = await this.linkContractor(
+        sevaId,
+        {
+          contractorId: item.contractorId,
+          role: item.role || SevaContractorRole.PRIMARY,
+          scope: item.scope,
+          status: item.status || SevaContractorStatus.INVITED,
+          quotedAmount: item.quotedAmount !== undefined && item.quotedAmount !== null ? Number(item.quotedAmount) : undefined,
+          finalAmount: item.finalAmount !== undefined && item.finalAmount !== null ? Number(item.finalAmount) : undefined,
+          invoiceNumber: item.invoiceNumber || undefined,
+          invoicedAmount: item.invoicedAmount !== undefined && item.invoicedAmount !== null ? Number(item.invoicedAmount) : undefined,
+          invoicedAt: item.invoicedAt ? new Date(item.invoicedAt).toISOString() : undefined,
+          paidAt: item.paidAt ? new Date(item.paidAt).toISOString() : undefined,
+          confirmWarning: item.confirmWarning ?? true,
+        },
+        userId
+      );
+      updated.push(link);
+    }
+
+    return updated;
+  }
+
+  /**
    * Get suggestions for a Seva task based on CategoryTrade mappings,
    * ranked by preferred, rating, active status, and valid insurance.
    */
@@ -384,6 +438,7 @@ export class SevaContractorService {
       },
       include: {
         seva: { select: { id: true, code: true, title: true } },
+        fileObject: { select: { originalName: true } },
       },
     });
 
@@ -395,11 +450,34 @@ export class SevaContractorService {
       supplierName: string;
       quoteAmount: number | null;
       matches: Array<{
+        id: string;
         contractorId: string;
         code: string;
         companyName: string;
         similarity: number;
       }>;
+      file: {
+        id: string;
+        caption: string | null;
+        supplierName: string | null;
+        amount: number | null;
+        currency: string;
+        sevaId: string;
+        seva: {
+          id: string;
+          code: string;
+          title: string;
+        };
+        fileObject: {
+          originalName: string;
+        } | null;
+      };
+      matchedContractor: {
+        id: string;
+        code: string;
+        companyName: string;
+      };
+      similarity: number;
     }> = [];
 
     for (const quote of unlinkedQuotes) {
@@ -421,7 +499,16 @@ export class SevaContractorService {
         LIMIT 3
       `);
 
-      if (matches.length > 0) {
+      if (matches.length > 0 && matches[0]) {
+        const topMatch = matches[0];
+        const matchItems = matches.map((m) => ({
+          id: m.id,
+          contractorId: m.id,
+          code: m.code,
+          companyName: m.company_name,
+          similarity: Number(m.sim.toFixed(2)),
+        }));
+
         suggestions.push({
           quoteFileId: quote.id,
           sevaId: quote.seva.id,
@@ -429,12 +516,29 @@ export class SevaContractorService {
           sevaTitle: quote.seva.title,
           supplierName: quote.supplierName,
           quoteAmount: quote.amount ? Number(quote.amount) : null,
-          matches: matches.map((m) => ({
-            contractorId: m.id,
-            code: m.code,
-            companyName: m.company_name,
-            similarity: Number(m.sim.toFixed(2)),
-          })),
+          matches: matchItems,
+          file: {
+            id: quote.id,
+            caption: quote.caption,
+            supplierName: quote.supplierName,
+            amount: quote.amount ? Number(quote.amount) : null,
+            currency: quote.currency || "AUD",
+            sevaId: quote.seva.id,
+            seva: {
+              id: quote.seva.id,
+              code: quote.seva.code,
+              title: quote.seva.title,
+            },
+            fileObject: quote.fileObject
+              ? { originalName: quote.fileObject.originalName }
+              : null,
+          },
+          matchedContractor: {
+            id: topMatch.id,
+            code: topMatch.code,
+            companyName: topMatch.company_name,
+          },
+          similarity: Number(topMatch.sim.toFixed(2)),
         });
       }
     }

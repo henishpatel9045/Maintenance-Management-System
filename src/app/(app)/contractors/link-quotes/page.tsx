@@ -44,17 +44,17 @@ export default function LinkQuotesPage() {
     }
   }, [canManage]);
 
-  const handleLinkQuote = async (sevaFileId: string, contractorId: string) => {
-    setLinkingId(sevaFileId);
+  const handleLinkQuote = async (fileId: string, contractorId: string) => {
+    setLinkingId(fileId);
     try {
       const res = await fetch("/api/v1/files/link-contractor", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sevaFileId, contractorId }),
+        body: JSON.stringify({ quoteFileId: fileId, sevaFileId: fileId, contractorId }),
       });
       if (res.ok) {
         // Remove from list
-        setSuggestions((prev) => prev.filter((s) => s.file.id !== sevaFileId));
+        setSuggestions((prev) => prev.filter((s) => (s.file?.id || s.quoteFileId) !== fileId));
       }
     } catch {} finally {
       setLinkingId(null);
@@ -126,67 +126,103 @@ export default function LinkQuotesPage() {
           </p>
 
           <div className="space-y-3">
-            {suggestions.map((item) => (
-              <div
-                key={item.file.id}
-                className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-              >
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-indigo-500" />
-                    <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
-                      {item.file.caption || item.file.fileObject?.originalName}
-                    </span>
-                    <Badge size="sm" variant="neutral">
-                      Supplier: &ldquo;{item.file.supplierName}&rdquo;
-                    </Badge>
-                  </div>
+            {suggestions.map((item, idx) => {
+              const fileId = item.file?.id || item.quoteFileId || `quote-${idx}`;
+              const fileName =
+                item.file?.caption ||
+                item.file?.fileObject?.originalName ||
+                item.supplierName ||
+                "Quotation Document";
+              const supplierName = item.file?.supplierName || item.supplierName || "Unknown";
+              const sevaId = item.file?.sevaId || item.sevaId;
+              const sevaCode = item.file?.seva?.code || item.sevaCode || "SEVA";
+              const sevaTitle = item.file?.seva?.title || item.sevaTitle || "";
+              const quoteAmount =
+                item.file?.amount != null ? item.file.amount : item.quoteAmount;
+              const matched = item.matchedContractor || item.matches?.[0];
+              const matchedId = matched?.id || matched?.contractorId;
+              const matchedName = matched?.companyName || "Contractor";
+              const matchedCode = matched?.code || "";
+              const similarityVal = item.similarity ?? matched?.similarity ?? 1;
 
-                  <div className="flex items-center gap-2 text-xs text-slate-500">
-                    <span>Task: </span>
-                    <Link
-                      href={`/seva/${item.file.sevaId}`}
-                      target="_blank"
-                      className="text-indigo-600 hover:underline flex items-center gap-1 font-medium"
-                    >
-                      {item.file.seva?.code} - {item.file.seva?.title} <ExternalLink className="w-3 h-3" />
-                    </Link>
-                    {item.file.amount != null && (
-                      <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
-                        (${Number(item.file.amount).toFixed(2)})
+              return (
+                <div
+                  key={fileId}
+                  className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-indigo-500" />
+                      <span className="font-bold text-xs text-slate-900 dark:text-slate-100">
+                        {fileName}
                       </span>
+                      <Badge size="sm" variant="neutral">
+                        Supplier: &ldquo;{supplierName}&rdquo;
+                      </Badge>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span>Task: </span>
+                      {sevaId ? (
+                        <Link
+                          href={`/seva/${sevaId}`}
+                          target="_blank"
+                          className="text-indigo-600 hover:underline flex items-center gap-1 font-medium"
+                        >
+                          {sevaCode} - {sevaTitle} <ExternalLink className="w-3 h-3" />
+                        </Link>
+                      ) : (
+                        <span>
+                          {sevaCode} - {sevaTitle}
+                        </span>
+                      )}
+                      {quoteAmount != null && (
+                        <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
+                          (${Number(quoteAmount).toFixed(2)})
+                        </span>
+                      )}
+                    </div>
+
+                    {matched && (
+                      <div className="pt-1 flex items-center gap-2 text-xs">
+                        <span className="text-emerald-600 font-medium flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Suggested Match:
+                        </span>
+                        {matchedId ? (
+                          <Link
+                            href={`/contractors/${matchedId}`}
+                            target="_blank"
+                            className="font-bold text-slate-800 dark:text-slate-200 hover:underline"
+                          >
+                            {matchedName} {matchedCode ? `[${matchedCode}]` : ""}
+                          </Link>
+                        ) : (
+                          <span className="font-bold text-slate-800 dark:text-slate-200">
+                            {matchedName} {matchedCode ? `[${matchedCode}]` : ""}
+                          </span>
+                        )}
+                        <span className="text-slate-400 text-[11px]">
+                          ({(similarityVal * 100).toFixed(0)}% similarity)
+                        </span>
+                      </div>
                     )}
                   </div>
 
-                  <div className="pt-1 flex items-center gap-2 text-xs">
-                    <span className="text-emerald-600 font-medium flex items-center gap-1">
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Suggested Match:
-                    </span>
-                    <Link
-                      href={`/contractors/${item.matchedContractor.id}`}
-                      target="_blank"
-                      className="font-bold text-slate-800 dark:text-slate-200 hover:underline"
-                    >
-                      {item.matchedContractor.companyName} [{item.matchedContractor.code}]
-                    </Link>
-                    <span className="text-slate-400 text-[11px]">
-                      ({(item.similarity * 100).toFixed(0)}% similarity)
-                    </span>
-                  </div>
+                  {matchedId && fileId && (
+                    <div className="shrink-0 self-end sm:self-center">
+                      <Button
+                        size="sm"
+                        className="gap-1.5 text-xs"
+                        disabled={linkingId === fileId}
+                        onClick={() => handleLinkQuote(fileId, matchedId)}
+                      >
+                        <LinkIcon className="w-3.5 h-3.5" /> Confirm Link
+                      </Button>
+                    </div>
+                  )}
                 </div>
-
-                <div className="shrink-0 self-end sm:self-center">
-                  <Button
-                    size="sm"
-                    className="gap-1.5 text-xs"
-                    disabled={linkingId === item.file.id}
-                    onClick={() => handleLinkQuote(item.file.id, item.matchedContractor.id)}
-                  >
-                    <LinkIcon className="w-3.5 h-3.5" /> Confirm Link
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

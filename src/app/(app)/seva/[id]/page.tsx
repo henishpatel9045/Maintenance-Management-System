@@ -319,7 +319,7 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
       const updatedList = existing
         ? sevaContractors.map((c) =>
             c.contractorId === engagePrompt.contractorId
-              ? { ...c, status: "ENGAGED", quotedAmount: engagePrompt.amount }
+              ? { ...c, status: "ENGAGED", quotedAmount: engagePrompt.amount, confirmWarning: true }
               : c
           )
         : [
@@ -329,15 +329,18 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
               role: "PRIMARY",
               status: "ENGAGED",
               quotedAmount: engagePrompt.amount,
+              confirmWarning: true,
             },
           ];
 
-      await fetch(`/api/v1/seva/${sevaId}/contractors`, {
+      const res = await fetch(`/api/v1/seva/${sevaId}/contractors`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contractors: updatedList }),
       });
-      loadContractors();
+      if (res.ok) {
+        loadContractors();
+      }
     } catch {} finally {
       setEngagePrompt(null);
     }
@@ -369,12 +372,13 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
     try {
       const newEntry = {
         contractorId: selectedContractorToAdd.id,
-        role: contractorForm.role,
+        role: contractorForm.role || "PRIMARY",
         scope: contractorForm.scope || undefined,
         quotedAmount: contractorForm.quotedAmount ? Number(contractorForm.quotedAmount) : undefined,
         finalAmount: contractorForm.finalAmount ? Number(contractorForm.finalAmount) : undefined,
         invoiceNumber: contractorForm.invoiceNumber || undefined,
         invoicedAmount: contractorForm.invoicedAmount ? Number(contractorForm.invoicedAmount) : undefined,
+        confirmWarning: true,
       };
 
       const updatedList = [
@@ -400,8 +404,13 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
           invoicedAmount: "",
         });
         loadContractors();
+      } else {
+        const errJson = await res.json().catch(() => null);
+        alert(errJson?.error?.message || "Failed to assign contractor. Please check inputs and permissions.");
       }
-    } catch {}
+    } catch (err: any) {
+      alert(err?.message || "An unexpected error occurred while assigning contractor.");
+    }
   };
 
   const handleRevokeQuote = async (fileId: string) => {
