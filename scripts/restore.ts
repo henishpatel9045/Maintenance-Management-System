@@ -14,6 +14,7 @@
 
 import fs from "fs";
 import path from "path";
+import os from "os";
 import crypto from "crypto";
 import readline from "readline/promises";
 import { stdin as input, stdout as output } from "process";
@@ -118,7 +119,19 @@ function copyDirectoryRecursive(src: string, dest: string) {
     if (entry.isDirectory()) {
       copyDirectoryRecursive(srcPath, destPath);
     } else {
-      fs.copyFileSync(srcPath, destPath);
+      try {
+        if (fs.existsSync(destPath)) {
+          fs.chmodSync(destPath, 0o666);
+          fs.unlinkSync(destPath);
+        }
+      } catch {}
+
+      try {
+        fs.copyFileSync(srcPath, destPath);
+      } catch {
+        // Fallback: direct stream / buffer write for Windows bind-mount permissions
+        fs.writeFileSync(destPath, fs.readFileSync(srcPath));
+      }
     }
   }
 }
@@ -214,7 +227,10 @@ async function main() {
   console.log("------------------------------------------------------------------------");
 
   // 1. Extract ZIP to temporary workspace
-  const tempExtractDir = path.join(PROJECT_ROOT, `.tmp_restore_${Date.now()}`);
+  const tempBase = fs.existsSync("/app/data")
+    ? "/app/data"
+    : os.tmpdir();
+  const tempExtractDir = path.join(tempBase, `.tmp_restore_${Date.now()}`);
   fs.mkdirSync(tempExtractDir, { recursive: true });
 
   try {

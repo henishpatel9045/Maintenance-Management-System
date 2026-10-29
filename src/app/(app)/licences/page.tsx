@@ -29,11 +29,13 @@ import {
   SlidersHorizontal,
   ExternalLink,
   ChevronDown,
+  Edit2,
 } from "lucide-react";
 import { Button } from "@/core/ui-kit/Button";
 import { Badge } from "@/core/ui-kit/Badge";
 import { Modal } from "@/core/ui-kit/Modal";
 import { EmptyState } from "@/core/ui-kit/EmptyState";
+import { UserLicencesManagerModal } from "@/modules/licences/components/UserLicencesManagerModal";
 
 export default function LicencesPage() {
   const router = useRouter();
@@ -80,6 +82,7 @@ export default function LicencesPage() {
   const canDirectoryContact = isAdmin || isCoordinator || perms.has("licences.directory.contact") || perms.has("licences.manage");
   const canSensitiveView = isAdmin || isCoordinator || perms.has("licences.sensitive.view") || perms.has("licences.manage");
   const canReportsView = isAdmin || isCoordinator || perms.has("licences.reports.view") || perms.has("licences.manage");
+  const canManage = isAdmin || isCoordinator || perms.has("licences.manage");
 
   // Sync tab with URL
   const switchTab = (tab: string) => {
@@ -217,6 +220,7 @@ export default function LicencesPage() {
         <DirectoryTab
           canContact={canDirectoryContact}
           canSensitiveView={canSensitiveView}
+          canManage={canManage}
         />
       )}
       {activeTab === "summary" && canDirectoryView && <SummaryTab />}
@@ -263,6 +267,9 @@ function TabButton({
 function MyLicencesTab({ currentUser }: { currentUser: any }) {
   const [licences, setLicences] = useState<any[]>([]);
   const [availability, setAvailability] = useState<any>(null);
+  const [noteInput, setNoteInput] = useState("");
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [noteSaved, setNoteSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
   const [renewingLicence, setRenewingLicence] = useState<any>(null);
@@ -284,6 +291,7 @@ function MyLicencesTab({ currentUser }: { currentUser: any }) {
       if (availRes.ok) {
         const json = await availRes.json();
         setAvailability(json.data);
+        setNoteInput(json.data?.note || "");
       }
       if (typesRes.ok) {
         const json = await typesRes.json();
@@ -302,17 +310,24 @@ function MyLicencesTab({ currentUser }: { currentUser: any }) {
 
   const handleAvailabilityChange = async (status: string, note?: string) => {
     try {
+      setIsSavingNote(true);
+      const targetNote = note !== undefined ? note : noteInput;
       const res = await fetch("/api/v1/me/availability", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, note: note || availability?.note }),
+        body: JSON.stringify({ status, note: targetNote }),
       });
       if (res.ok) {
         const json = await res.json();
         setAvailability(json.data);
+        setNoteInput(json.data?.note || "");
+        setNoteSaved(true);
+        setTimeout(() => setNoteSaved(false), 2000);
       }
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSavingNote(false);
     }
   };
 
@@ -331,7 +346,7 @@ function MyLicencesTab({ currentUser }: { currentUser: any }) {
   return (
     <div className="space-y-6">
       {/* Availability Bar Card */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 shadow-sm space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h2 className="text-sm sm:text-base font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
@@ -339,7 +354,7 @@ function MyLicencesTab({ currentUser }: { currentUser: any }) {
               My Seva Availability Status
             </h2>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Let coordinators know when you are available for assignments.
+              Let coordinators know when you are available for assignments and add custom schedule notes.
             </p>
           </div>
 
@@ -347,7 +362,7 @@ function MyLicencesTab({ currentUser }: { currentUser: any }) {
             {(["AVAILABLE", "LIMITED", "UNAVAILABLE"] as const).map((st) => (
               <button
                 key={st}
-                onClick={() => handleAvailabilityChange(st)}
+                onClick={() => handleAvailabilityChange(st, noteInput)}
                 className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
                   availability?.status === st
                     ? st === "AVAILABLE"
@@ -364,12 +379,32 @@ function MyLicencesTab({ currentUser }: { currentUser: any }) {
           </div>
         </div>
 
-        {availability?.note && (
-          <div className="mt-3 text-xs bg-slate-50 dark:bg-slate-800/40 p-2.5 rounded-lg border border-slate-200 dark:border-slate-700/60 text-slate-600 dark:text-slate-300">
-            <span className="font-semibold text-slate-700 dark:text-slate-200">Note: </span>
-            {availability.note}
+        {/* Custom availability note input for member */}
+        <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row gap-2 items-start sm:items-center">
+          <div className="flex-1 w-full">
+            <input
+              type="text"
+              placeholder="Custom availability note (e.g. Weekends only, Saturday mornings, After 5 PM)..."
+              value={noteInput}
+              onChange={(e) => setNoteInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleAvailabilityChange(availability?.status || "AVAILABLE", noteInput);
+                }
+              }}
+              className="w-full text-xs px-3 py-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
           </div>
-        )}
+          <Button
+            size="sm"
+            variant="outline"
+            isLoading={isSavingNote}
+            onClick={() => handleAvailabilityChange(availability?.status || "AVAILABLE", noteInput)}
+            icon={noteSaved ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : undefined}
+          >
+            {noteSaved ? "Saved" : "Save Note"}
+          </Button>
+        </div>
       </div>
 
       {/* Licences List Header */}
@@ -877,14 +912,17 @@ function RenewLicenceModal({
 function DirectoryTab({
   canContact,
   canSensitiveView,
+  canManage,
 }: {
   canContact: boolean;
   canSensitiveView: boolean;
+  canManage?: boolean;
 }) {
   const [people, setPeople] = useState<any[]>([]);
   const [types, setTypes] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [selectedUserForManage, setSelectedUserForManage] = useState<any | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -1069,6 +1107,7 @@ function DirectoryTab({
                   <th className="px-4 py-3">Availability</th>
                   <th className="px-4 py-3">Licences & Tickets</th>
                   {canContact && <th className="px-4 py-3 text-right">Contact</th>}
+                  {canManage && <th className="px-4 py-3 text-right">Actions</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -1189,12 +1228,37 @@ function DirectoryTab({
                         </div>
                       </td>
                     )}
+
+                    {canManage && (
+                      <td className="px-4 py-3.5 align-top text-right whitespace-nowrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setSelectedUserForManage(person)}
+                          icon={<Edit2 className="w-3.5 h-3.5 text-indigo-600" />}
+                        >
+                          Manage Licences
+                        </Button>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         </div>
+      )}
+
+      {selectedUserForManage && (
+        <UserLicencesManagerModal
+          userId={selectedUserForManage.id}
+          userName={selectedUserForManage.name}
+          isOpen={!!selectedUserForManage}
+          onClose={() => {
+            setSelectedUserForManage(null);
+            fetchDirectory();
+          }}
+        />
       )}
     </div>
   );
@@ -1253,7 +1317,7 @@ function SummaryTab() {
   return (
     <div className="space-y-6">
       {/* Overview Stat Counters */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm">
           <span className="text-xs text-slate-500 font-medium">Volunteers with Licences</span>
           <div className="text-2xl font-bold text-slate-900 dark:text-slate-100 mt-1">
@@ -1272,13 +1336,6 @@ function SummaryTab() {
           <span className="text-xs text-slate-500 font-medium">Expiring in 30 Days</span>
           <div className="text-2xl font-bold text-amber-600 dark:text-amber-400 mt-1">
             {counters.totalExpiringSoon || 0}
-          </div>
-        </div>
-
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-sm">
-          <span className="text-xs text-slate-500 font-medium">Below Target Types</span>
-          <div className="text-2xl font-bold text-rose-600 dark:text-rose-400 mt-1">
-            {counters.totalBelowTargetTypes || 0}
           </div>
         </div>
       </div>
@@ -1302,13 +1359,6 @@ function SummaryTab() {
                       {t.name}
                     </h3>
                   </div>
-
-                  {t.belowTarget && (
-                    <Badge variant="danger" size="sm">
-                      <AlertTriangle className="w-3 h-3 mr-1" />
-                      Below Target (-{t.shortfall})
-                    </Badge>
-                  )}
                 </div>
 
                 {/* Counts Breakdown */}
@@ -1338,30 +1388,6 @@ function SummaryTab() {
                     <div className="text-[10px] text-slate-400 font-medium">Pending</div>
                   </div>
                 </div>
-
-                {/* Target Progress Bar */}
-                {t.minHoldersTarget ? (
-                  <div className="space-y-1">
-                    <div className="flex justify-between text-xs font-medium">
-                      <span className="text-slate-500">Target: {t.minHoldersTarget} holders</span>
-                      <span className={t.belowTarget ? "text-rose-600" : "text-emerald-600"}>
-                        {t.progressPercent}%
-                      </span>
-                    </div>
-                    <div className="h-2 w-full bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                      <div
-                        className={`h-full transition-all ${
-                          t.belowTarget ? "bg-rose-500" : "bg-emerald-500"
-                        }`}
-                        style={{ width: `${Math.min(100, t.progressPercent)}%` }}
-                      />
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-400 font-medium italic">
-                    No minimum target set
-                  </div>
-                )}
               </div>
 
               <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs text-indigo-600 dark:text-indigo-400 font-medium flex items-center justify-between">

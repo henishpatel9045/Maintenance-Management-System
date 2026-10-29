@@ -21,6 +21,7 @@ import {
   Eye,
   EyeOff,
   RefreshCw,
+  Edit2,
 } from "lucide-react";
 import { Button } from "@/core/ui-kit/Button";
 import { Badge } from "@/core/ui-kit/Badge";
@@ -45,6 +46,16 @@ export default function AdminPage() {
   const [newUserRole, setNewUserRole] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
   const [selectedUserForLicences, setSelectedUserForLicences] = useState<any | null>(null);
+
+  // Edit User state
+  const [selectedUserForEdit, setSelectedUserForEdit] = useState<any | null>(null);
+  const [editUserName, setEditUserName] = useState("");
+  const [editUserEmail, setEditUserEmail] = useState("");
+  const [editUserPhone, setEditUserPhone] = useState("");
+  const [editUserRoleId, setEditUserRoleId] = useState("");
+  const [editUserActive, setEditUserActive] = useState(true);
+  const [isSavingUser, setIsSavingUser] = useState(false);
+  const [editUserError, setEditUserError] = useState<string | null>(null);
 
   // Password Reset state
   const [selectedUserForReset, setSelectedUserForReset] = useState<any | null>(null);
@@ -158,6 +169,51 @@ export default function AdminPage() {
       });
       loadData();
     } catch {}
+  };
+
+  const handleOpenEditUser = (u: any) => {
+    setSelectedUserForEdit(u);
+    setEditUserName(u.name || "");
+    setEditUserEmail(u.email || "");
+    setEditUserPhone(u.phone || "");
+    setEditUserRoleId(u.role?.id || u.roleId || (roles[0]?.id || ""));
+    setEditUserActive(u.isActive !== false);
+    setEditUserError(null);
+  };
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedUserForEdit) return;
+    setIsSavingUser(true);
+    setEditUserError(null);
+
+    try {
+      const res = await fetch(`/api/v1/users/${selectedUserForEdit.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editUserName.trim(),
+          email: editUserEmail.trim(),
+          phone: editUserPhone.trim() || null,
+          roleId: editUserRoleId,
+          isActive: editUserActive,
+        }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) {
+        setEditUserError(json.error?.message || "Failed to update user details");
+        setIsSavingUser(false);
+        return;
+      }
+
+      setSelectedUserForEdit(null);
+      loadData();
+    } catch {
+      setEditUserError("An error occurred while saving user details");
+    } finally {
+      setIsSavingUser(false);
+    }
   };
 
   const generateRandomPassword = () => {
@@ -290,6 +346,14 @@ export default function AdminPage() {
       header: "",
       render: (u) => (
         <div className="flex items-center gap-1.5 justify-end">
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleOpenEditUser(u)}
+            icon={<Edit2 className="w-3.5 h-3.5 text-indigo-600" />}
+          >
+            Edit
+          </Button>
           <Button
             size="sm"
             variant="outline"
@@ -556,6 +620,97 @@ export default function AdminPage() {
           </div>
         </form>
       </Modal>
+
+      {/* Edit User Modal */}
+      {selectedUserForEdit && (
+        <Modal
+          isOpen={!!selectedUserForEdit}
+          onClose={() => setSelectedUserForEdit(null)}
+          title={`Edit User: ${selectedUserForEdit.name}`}
+          maxWidth="md"
+        >
+          <form onSubmit={handleSaveEditUser} className="space-y-3">
+            {editUserError && (
+              <div className="p-2.5 bg-red-50 text-red-800 dark:bg-red-950/40 dark:text-red-300 rounded-lg text-xs flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{editUserError}</span>
+              </div>
+            )}
+            <FormField label="Full Name" required>
+              <input
+                type="text"
+                required
+                value={editUserName}
+                onChange={(e) => setEditUserName(e.target.value)}
+                className={inputClass}
+              />
+            </FormField>
+            <FormField label="Email Address" required>
+              <input
+                type="email"
+                required
+                value={editUserEmail}
+                onChange={(e) => setEditUserEmail(e.target.value)}
+                className={inputClass}
+              />
+            </FormField>
+            <FormField label="Phone Number">
+              <input
+                type="text"
+                placeholder="Optional mobile / contact number"
+                value={editUserPhone}
+                onChange={(e) => setEditUserPhone(e.target.value)}
+                className={inputClass}
+              />
+            </FormField>
+            <FormField label="Role" required>
+              <select
+                value={editUserRoleId}
+                onChange={(e) => setEditUserRoleId(e.target.value)}
+                className={selectClass}
+              >
+                {roles.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name} - {r.description}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+            <FormField label="Account Status">
+              <div className="flex items-center gap-3 pt-1">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="editUserActive"
+                    checked={editUserActive === true}
+                    onChange={() => setEditUserActive(true)}
+                    className="text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="font-medium text-emerald-600">Active</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input
+                    type="radio"
+                    name="editUserActive"
+                    checked={editUserActive === false}
+                    onChange={() => setEditUserActive(false)}
+                    className="text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="font-medium text-slate-500">Deactivated</span>
+                </label>
+              </div>
+            </FormField>
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button type="button" variant="outline" size="sm" onClick={() => setSelectedUserForEdit(null)}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary" size="sm" isLoading={isSavingUser}>
+                Save Changes
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
 
       {/* Create Category Modal */}
       <Modal isOpen={isCreateCatOpen} onClose={() => setIsCreateCatOpen(false)} title="Create Maintenance Category">

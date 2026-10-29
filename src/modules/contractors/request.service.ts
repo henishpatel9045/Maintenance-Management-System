@@ -11,6 +11,33 @@ import {
 } from "./schemas";
 import { AuthenticatedUser, can } from "@/core/permissions/can";
 
+function extractTradeEntries(rawTrades: unknown): { tradeId: string; isPrimary: boolean }[] {
+  if (!Array.isArray(rawTrades)) return [];
+  const entries: { tradeId: string; isPrimary: boolean }[] = [];
+  for (let idx = 0; idx < rawTrades.length; idx++) {
+    const t = rawTrades[idx];
+    let tradeId: string | undefined;
+    let isPrimary = idx === 0;
+
+    if (typeof t === "string" && t.trim()) {
+      tradeId = t.trim();
+    } else if (typeof t === "object" && t !== null) {
+      const rawId = (t as any).tradeId || (t as any).id || (t as any).value;
+      if (typeof rawId === "string" && rawId.trim()) {
+        tradeId = rawId.trim();
+      }
+      if (typeof (t as any).isPrimary === "boolean") {
+        isPrimary = (t as any).isPrimary;
+      }
+    }
+
+    if (tradeId && !entries.some((e) => e.tradeId === tradeId)) {
+      entries.push({ tradeId, isPrimary });
+    }
+  }
+  return entries;
+}
+
 export class RequestService {
   public static create = RequestService.submit;
 
@@ -326,10 +353,26 @@ export class RequestService {
       // Trades comparison
       if (proposed.trades !== undefined) {
         const currentTradeIds = target.trades.map((t) => t.tradeId).sort();
-        const proposedTradeIds = (proposed.trades as Array<{ tradeId: string }>).map((t) => t.tradeId).sort();
+        const rawProposed = Array.isArray(proposed.trades) ? proposed.trades : [];
+        const proposedEntries = extractTradeEntries(rawProposed);
+        const proposedTradeIds = proposedEntries.map((e) => e.tradeId).sort();
+
+        // Fetch trade names for proposed trades
+        const tradeRecords = await db.trade.findMany({
+          where: { id: { in: proposedTradeIds } },
+          select: { id: true, name: true },
+        });
+        const tradeMap = new Map(tradeRecords.map((tr) => [tr.id, tr.name]));
+
+        const normalizedProposed = proposedEntries.map((e) => ({
+          tradeId: e.tradeId,
+          name: tradeMap.get(e.tradeId) || e.tradeId,
+          isPrimary: e.isPrimary,
+        }));
+
         diff["trades"] = {
           current: target.trades.map((t) => ({ tradeId: t.tradeId, name: t.trade.name, isPrimary: t.isPrimary })),
-          proposed: proposed.trades,
+          proposed: normalizedProposed,
           changed: JSON.stringify(currentTradeIds) !== JSON.stringify(proposedTradeIds),
         };
       }
@@ -453,30 +496,47 @@ export class RequestService {
 
         // Insert trades
         if (mergedData.trades && Array.isArray(mergedData.trades)) {
-          await tx.contractorTrade.createMany({
-            data: mergedData.trades.map((t: any) => ({
-              contractorId: newContractor.id,
-              tradeId: t.tradeId,
-              isPrimary: t.isPrimary ?? false,
-            })),
-          });
+          const tradeEntries = extractTradeEntries(mergedData.trades);
+          if (tradeEntries.length > 0) {
+            const existingTrades = await tx.trade.findMany({
+              where: { id: { in: tradeEntries.map((e) => e.tradeId) } },
+              select: { id: true },
+            });
+            const validIds = new Set(existingTrades.map((et) => et.id));
+            const validEntries = tradeEntries.filter((e) => validIds.has(e.tradeId));
+
+            if (validEntries.length > 0) {
+              await tx.contractorTrade.createMany({
+                data: validEntries.map((e) => ({
+                  contractorId: newContractor.id,
+                  tradeId: e.tradeId,
+                  isPrimary: e.isPrimary,
+                })),
+              });
+            }
+          }
         }
 
         // Insert contacts
         if (mergedData.contacts && Array.isArray(mergedData.contacts)) {
-          await tx.contractorContact.createMany({
-            data: mergedData.contacts.map((c: any, idx: number) => ({
-              contractorId: newContractor.id,
-              name: c.name,
-              jobTitle: c.jobTitle || null,
-              phone: c.phone || null,
-              mobile: c.mobile || null,
-              email: c.email || null,
-              isPrimary: c.isPrimary ?? idx === 0,
-              notes: c.notes || null,
-              isActive: true,
-            })),
-          });
+          const validContacts = mergedData.contacts.filter(
+            (c: any) => c && typeof c === "object" && typeof c.name === "string" && c.name.trim().length > 0
+          );
+          if (validContacts.length > 0) {
+            await tx.contractorContact.createMany({
+              data: validContacts.map((c: any, idx: number) => ({
+                contractorId: newContractor.id,
+                name: c.name.trim(),
+                jobTitle: c.jobTitle || null,
+                phone: c.phone || null,
+                mobile: c.mobile || null,
+                email: c.email || null,
+                isPrimary: c.isPrimary ?? idx === 0,
+                notes: c.notes || null,
+                isActive: true,
+              })),
+            });
+          }
         }
       } else {
         // UPDATE_CONTRACTOR
@@ -528,30 +588,63 @@ export class RequestService {
         if (sourceData.trades !== undefined && (!acceptedSet || acceptedSet.has("trades"))) {
           await tx.contractorTrade.deleteMany({ where: { contractorId: resultingContractorId } });
           if (Array.isArray(sourceData.trades) && sourceData.trades.length > 0) {
-            await tx.contractorTrade.createMany({
-              data: sourceData.trades.map((t: any) => ({
-                contractorId: resultingContractorId,
-                tradeId: t.tradeId,
-                isPrimary: t.isPrimary ?? false,
-              })),
-            });
+            const tradeEntries = extractTradeEntries(sourceData.trades);
+            if (tradeEntries.length > 0) {
+              const existingTrades = await tx.trade.findMany({
+                where: { id: { in: tradeEntries.map((e) => e.tradeId) } },
+                select: { id: true },
+              });
+              const validIds = new Set(existingTrades.map((et) => et.id));
+              const validEntries = tradeEntries.filter((e) => validIds.has(e.tradeId));
+
+              if (validEntries.length > 0) {
+                await tx.contractorTrade.createMany({
+                  data: validEntries.map((e) => ({
+                    contractorId: resultingContractorId,
+                    tradeId: e.tradeId,
+                    isPrimary: e.isPrimary,
+                  })),
+                });
+              }
+            }
           }
         }
       }
 
-      // Link supporting files to resulting contractor if specified
-      if (input.supportingFileIds && input.supportingFileIds.length > 0) {
-        for (const fileObjectId of input.supportingFileIds) {
-          await tx.fileLink.create({
-            data: {
+      // Link supporting files to resulting contractor if specified or if attached to request
+      const fileIdsToLink = new Set<string>(input.supportingFileIds || []);
+      const requestFiles = await tx.fileLink.findMany({
+        where: {
+          entityType: "CONTRACTOR_REQUEST",
+          entityId: id,
+        },
+        select: { fileObjectId: true },
+      });
+      for (const rf of requestFiles) {
+        fileIdsToLink.add(rf.fileObjectId);
+      }
+
+      if (fileIdsToLink.size > 0) {
+        for (const fileObjectId of fileIdsToLink) {
+          const alreadyLinked = await tx.fileLink.findFirst({
+            where: {
               fileObjectId,
               entityType: "CONTRACTOR",
               entityId: resultingContractorId,
-              kind: "OTHER",
-              label: `Attached from request ${request.code}`,
-              createdById: reviewerUser.id,
             },
           });
+          if (!alreadyLinked) {
+            await tx.fileLink.create({
+              data: {
+                fileObjectId,
+                entityType: "CONTRACTOR",
+                entityId: resultingContractorId,
+                kind: "OTHER",
+                label: `Attached from request ${request.code}`,
+                createdById: reviewerUser.id,
+              },
+            });
+          }
         }
       }
 

@@ -339,3 +339,38 @@ export async function archiveSevaSubtree(params: {
     return { count: result.count };
   });
 }
+
+export async function unarchiveSevaSubtree(params: {
+  sevaId: string;
+  userId: string;
+  unarchiveSubtree?: boolean;
+}): Promise<{ count: number }> {
+  const { sevaId, userId, unarchiveSubtree = true } = params;
+
+  return await db.$transaction(async (tx) => {
+    const seva = await tx.seva.findUnique({ where: { id: sevaId } });
+    if (!seva) throw new AppError(404, "SEVA_NOT_FOUND", "Seva not found");
+
+    let whereClause: any = { id: sevaId };
+    if (unarchiveSubtree) {
+      whereClause = {
+        OR: [{ id: sevaId }, { path: { startsWith: seva.path } }],
+      };
+    }
+
+    const result = await tx.seva.updateMany({
+      where: whereClause,
+      data: { isArchived: false },
+    });
+
+    await logAudit({
+      entityType: "SEVA",
+      entityId: sevaId,
+      userId,
+      action: "UNARCHIVE_SEVA",
+      newValue: { unarchivedCount: result.count, subtree: unarchiveSubtree },
+    });
+
+    return { count: result.count };
+  });
+}

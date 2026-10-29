@@ -4,10 +4,17 @@ import { validateBody } from "@/core/http/validate";
 import { LicenceService, ensureLicencesEnabled, suspendLicenceSchema } from "@/modules/licences";
 import { AppError } from "@/core/http/error";
 
+import { can } from "@/core/permissions/can";
+
 export const runtime = "nodejs";
 
-export const POST = withAuth<{ id: string }>("licences.manage", async (req, { user, params }) => {
+export const POST = withAuth<{ id: string }>({}, async (req, { user, params }) => {
   await ensureLicencesEnabled();
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
+  if (!isCoordinatorOrAdmin && !can(user, "licences.manage")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
+
   const id = params.id;
   if (!id) throw new AppError(400, "INVALID_ID", "Licence ID is required");
 

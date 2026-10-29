@@ -21,7 +21,7 @@ const createUserSchema = z
   .strict();
 
 export const GET = withAuth({}, async (_req, { user }) => {
-  const isAdminOrUserMgr = can(user, "users.manage");
+  const isAdminOrUserMgr = user.role === "ADMIN" || user.role === "COORDINATOR" || can(user, "users.manage");
 
   const users = await db.user.findMany({
     where: isAdminOrUserMgr ? {} : { isActive: true },
@@ -44,7 +44,10 @@ export const GET = withAuth({}, async (_req, { user }) => {
   return NextResponse.json({ data: users });
 });
 
-export const POST = withAuth("users.manage", async (req, { user }) => {
+export const POST = withAuth({}, async (req, { user }) => {
+  if (user.role !== "ADMIN" && user.role !== "COORDINATOR" && !can(user, "users.manage")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
   const body = await validateBody(createUserSchema, req);
   const email = body.email.toLowerCase().trim();
 

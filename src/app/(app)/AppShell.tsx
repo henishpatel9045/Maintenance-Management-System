@@ -131,7 +131,7 @@ export function AppShell({ user, children }: AppShellProps) {
     ...(user.role === "ADMIN" || user.role === "COORDINATOR" || user.permissions.has("masters.manage")
       ? [{ label: "Areas", href: "/areas", icon: <MapPin className="w-4 h-4" /> }]
       : []),
-    ...(user.role === "ADMIN" || user.permissions.has("users.manage") || user.permissions.has("settings.manage")
+    ...(user.role === "ADMIN" || user.role === "COORDINATOR" || user.permissions.has("users.manage") || user.permissions.has("settings.manage")
       ? [{ label: "Admin", href: "/admin", icon: <Shield className="w-4 h-4" /> }]
       : []),
   ];

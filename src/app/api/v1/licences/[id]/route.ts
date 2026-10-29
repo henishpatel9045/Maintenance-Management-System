@@ -10,6 +10,7 @@ import {
   getLicenceTierContext,
   sanitizeUserLicence,
 } from "@/modules/licences";
+import { can } from "@/core/permissions/can";
 
 export const runtime = "nodejs";
 
@@ -31,14 +32,18 @@ export const GET = withAuth<{ id: string }>({}, async (req, { user, params }) =>
     throw new AppError(404, "NOT_FOUND", "Licence not found");
   }
 
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
   const tierContext = getLicenceTierContext(user);
   const isOwn = licence.userId === user.id;
 
-  if (!isOwn && !tierContext.canDirectoryView && !tierContext.canManage && !tierContext.canVerify) {
+  if (!isOwn && !isCoordinatorOrAdmin && !tierContext.canDirectoryView && !tierContext.canManage && !tierContext.canVerify) {
     throw new AppError(403, "FORBIDDEN", "Access denied");
   }
 
-  const sanitized = sanitizeUserLicence(licence, tierContext);
+  const canSeeFull = isCoordinatorOrAdmin || tierContext.canManage || tierContext.canSensitiveView;
+  const sanitized = canSeeFull
+    ? { ...licence, isOwn, isMasked: false, licenceNumberMasked: licence.licenceNumber }
+    : sanitizeUserLicence(licence, tierContext);
 
   return NextResponse.json(
     { data: sanitized },
@@ -46,9 +51,14 @@ export const GET = withAuth<{ id: string }>({}, async (req, { user, params }) =>
   );
 });
 
-// PATCH /api/v1/licences/:id (licences.manage)
-export const PATCH = withAuth<{ id: string }>("licences.manage", async (req, { user, params }) => {
+// PATCH /api/v1/licences/:id (licences.manage or Coordinator/Admin)
+export const PATCH = withAuth<{ id: string }>({}, async (req, { user, params }) => {
   await ensureLicencesEnabled();
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
+  if (!isCoordinatorOrAdmin && !can(user, "licences.manage")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
+
   const id = params.id;
   if (!id) throw new AppError(400, "INVALID_ID", "Licence ID is required");
 
@@ -61,9 +71,14 @@ export const PATCH = withAuth<{ id: string }>("licences.manage", async (req, { u
   );
 });
 
-// DELETE /api/v1/licences/:id (licences.manage) - Soft archive
-export const DELETE = withAuth<{ id: string }>("licences.manage", async (req, { user, params }) => {
+// DELETE /api/v1/licences/:id - Soft archive
+export const DELETE = withAuth<{ id: string }>({}, async (req, { user, params }) => {
   await ensureLicencesEnabled();
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
+  if (!isCoordinatorOrAdmin && !can(user, "licences.manage")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
+
   const id = params.id;
   if (!id) throw new AppError(400, "INVALID_ID", "Licence ID is required");
 

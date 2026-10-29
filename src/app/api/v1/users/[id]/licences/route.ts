@@ -10,6 +10,7 @@ import {
   getLicenceTierContext,
   sanitizeUserLicence,
 } from "@/modules/licences";
+import { can } from "@/core/permissions/can";
 
 export const runtime = "nodejs";
 
@@ -19,10 +20,11 @@ export const GET = withAuth<{ id: string }>({}, async (req, { user, params }) =>
   const targetUserId = params.id;
   if (!targetUserId) throw new AppError(400, "INVALID_ID", "User ID is required");
 
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
   const tierContext = getLicenceTierContext(user);
   const isOwn = user.id === targetUserId;
 
-  if (!isOwn && !tierContext.canDirectoryView && !tierContext.canManage && !tierContext.canVerify) {
+  if (!isOwn && !isCoordinatorOrAdmin && !tierContext.canDirectoryView && !tierContext.canManage && !tierContext.canVerify) {
     throw new AppError(403, "FORBIDDEN", "You do not have permission to view this user's licences");
   }
 
@@ -41,7 +43,12 @@ export const GET = withAuth<{ id: string }>({}, async (req, { user, params }) =>
     ],
   });
 
-  const sanitized = licences.map((lic) => sanitizeUserLicence(lic, tierContext));
+  const canSeeFull = isCoordinatorOrAdmin || tierContext.canManage || tierContext.canSensitiveView;
+  const sanitized = licences.map((lic) =>
+    canSeeFull
+      ? { ...lic, isOwn, isMasked: false, licenceNumberMasked: lic.licenceNumber }
+      : sanitizeUserLicence(lic, tierContext)
+  );
 
   return NextResponse.json(
     { data: sanitized },
@@ -49,9 +56,14 @@ export const GET = withAuth<{ id: string }>({}, async (req, { user, params }) =>
   );
 });
 
-// POST /api/v1/users/:id/licences - Add licence for user (licences.manage)
-export const POST = withAuth<{ id: string }>("licences.manage", async (req, { user, params }) => {
+// POST /api/v1/users/:id/licences - Add licence for user (licences.manage or Coordinator/Admin)
+export const POST = withAuth<{ id: string }>({}, async (req, { user, params }) => {
   await ensureLicencesEnabled();
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
+  if (!isCoordinatorOrAdmin && !can(user, "licences.manage")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
+
   const targetUserId = params.id;
   if (!targetUserId) throw new AppError(400, "INVALID_ID", "User ID is required");
 

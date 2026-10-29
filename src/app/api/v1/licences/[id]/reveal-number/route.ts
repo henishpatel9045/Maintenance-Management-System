@@ -7,11 +7,17 @@ import {
   ensureLicencesEnabled,
   getLicenceTierContext,
 } from "@/modules/licences";
+import { can } from "@/core/permissions/can";
 
 export const runtime = "nodejs";
 
-export const POST = withAuth<{ id: string }>("licences.sensitive.view", async (req, { user, params }) => {
+export const POST = withAuth<{ id: string }>({}, async (req, { user, params }) => {
   await ensureLicencesEnabled();
+  const isCoordinatorOrAdmin = user.role === "ADMIN" || user.role === "COORDINATOR";
+  if (!isCoordinatorOrAdmin && !can(user, "licences.sensitive.view")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
+
   const id = params.id;
   if (!id) throw new AppError(400, "INVALID_ID", "Licence ID is required");
 
@@ -28,7 +34,7 @@ export const POST = withAuth<{ id: string }>("licences.sensitive.view", async (r
   const isOwn = licence.userId === user.id;
 
   // Highly sensitive check: requires BOTH sensitive.view and documents.view
-  if (licence.licenceType.isHighlySensitive && !isOwn) {
+  if (licence.licenceType.isHighlySensitive && !isOwn && !isCoordinatorOrAdmin) {
     if (!tierContext.canDocumentsView) {
       throw new AppError(403, "FORBIDDEN", "Viewing highly sensitive licence numbers requires documents permission");
     }

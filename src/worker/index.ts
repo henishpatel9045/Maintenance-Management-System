@@ -13,6 +13,7 @@ import { runRefreshLicenceStatus } from "./jobs/refreshLicenceStatus";
 import { runScheduleLicenceReminders } from "./jobs/scheduleLicenceReminders";
 import { runLicenceSnapshot } from "./jobs/licenceSnapshot";
 import { runCheckUpcomingSevaLicences } from "./jobs/checkUpcomingSevaLicences";
+import { runScheduledArchiveFilePurge } from "./jobs/scheduledArchiveFilePurge";
 
 logger.info({ tz: config.TZ }, "Seva Background Worker Daemon initialized");
 
@@ -21,6 +22,7 @@ const LOCK_OCCURRENCE_GEN = 1001;
 const LOCK_OVERDUE_CHECK = 1002;
 const LOCK_REMINDERS = 1003;
 const LOCK_CLEANUP = 1004;
+const LOCK_ARCHIVE_FILE_PURGE = 1005;
 const LOCK_REFRESH_CREDENTIALS = 2001;
 const LOCK_SCHEDULE_CRED_REMINDERS = 2002;
 const LOCK_STALE_REQUESTS = 2003;
@@ -127,6 +129,18 @@ cron.schedule(
   },
   { timezone: config.TZ }
 );
+
+// 4c. Scheduled 24-hour archive file purge (every 15 minutes)
+cron.schedule(
+  "*/15 * * * *",
+  async () => {
+    await withAdvisoryLock(LOCK_ARCHIVE_FILE_PURGE, "ScheduledArchiveFilePurge", runScheduledArchiveFilePurge);
+  },
+  { timezone: config.TZ }
+);
+
+// Initial trigger on startup
+runScheduledArchiveFilePurge().catch(() => {});
 
 logger.info("All scheduled worker cron jobs registered and running.");
 

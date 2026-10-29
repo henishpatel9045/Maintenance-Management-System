@@ -101,3 +101,80 @@ export async function createSevaZipStream(options: ZipExportOptions): Promise<{
   const zipFilename = `${rootSeva.code}_${sanitizePathComponent(rootSeva.title)}_files.zip`;
   return { stream: passthrough, filename: zipFilename };
 }
+
+export interface MultiZipExportOptions {
+  sevaIds: string[];
+  user: AuthenticatedUser;
+}
+
+export async function createMultiSevaZipStream(options: MultiZipExportOptions): Promise<{
+  stream: Readable;
+  filename: string;
+  count: number;
+}> {
+  const { sevaIds, user } = options;
+
+  const sevas = await db.seva.findMany({
+    where: { id: { in: sevaIds } },
+    select: { id: true, code: true, title: true, path: true },
+  });
+
+  if (sevas.length === 0) {
+    throw new AppError(404, "NO_SEVAS_FOUND", "No matching Seva found");
+  }
+
+  // Get all descendant sevas as well
+  const pathConditions = sevas.map((s) => ({ path: { startsWith: s.path } }));
+  const allSevas = await db.seva.findMany({
+    where: {
+      OR: [{ id: { in: sevaIds } }, ...pathConditions],
+    },
+    select: { id: true, code: true, title: true, path: true },
+  });
+
+  const allSevaIds = Array.from(new Set(allSevas.map((s) => s.id)));
+
+  const sevaFiles = await db.sevaFile.findMany({
+    where: {
+      sevaId: { in: allSevaIds },
+      deletedAt: null,
+    },
+    include: {
+      fileObject: true,
+      seva: { select: { id: true, code: true, title: true, path: true } },
+    },
+  });
+
+  const archive = archiver("zip", { zlib: { level: 6 } });
+  const passthrough = new PassThrough();
+  archive.pipe(passthrough);
+
+  (async () => {
+    try {
+      for (const sf of sevaFiles) {
+        if (sf.bucket === "QUOTE" && !can(user, "quotes.view")) continue;
+        if (sf.bucket === "ARTEFACT" && !can(user, "artefacts.view")) continue;
+
+        const exists = await storage.fileExists(sf.fileObject.storageKey);
+        if (!exists) continue;
+
+        const sevaFolder = `${sf.seva.code}_${sanitizePathComponent(sf.seva.title)}`;
+        const bucketFolder = sf.bucket === "QUOTE" ? "Quotes" : "Artefacts";
+        const entryName = `${sevaFolder}/${bucketFolder}/${sanitizePathComponent(sf.fileObject.originalName)}`;
+
+        const fileStream = storage.createReadStream(sf.fileObject.storageKey);
+        archive.append(fileStream, { name: entryName });
+      }
+
+      await archive.finalize();
+    } catch (err) {
+      archive.emit("error", err);
+    }
+  })();
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const zipFilename = `seva_bulk_assets_${timestamp}.zip`;
+
+  return { stream: passthrough, filename: zipFilename, count: sevaFiles.length };
+}
+

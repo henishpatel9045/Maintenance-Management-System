@@ -2,9 +2,15 @@ import { NextResponse } from "next/server";
 import { withAuth } from "@/core/http/withAuth";
 import { db } from "@/core/db";
 
+import { AppError } from "@/core/http/error";
+import { can } from "@/core/permissions/can";
+
 export const runtime = "nodejs";
 
-export const GET = withAuth("users.manage", async () => {
+export const GET = withAuth({}, async (_req, { user }) => {
+  if (user.role !== "ADMIN" && user.role !== "COORDINATOR" && !can(user, "users.manage")) {
+    throw new AppError(403, "FORBIDDEN", "Forbidden");
+  }
   const roles = await db.role.findMany({
     select: {
       id: true,

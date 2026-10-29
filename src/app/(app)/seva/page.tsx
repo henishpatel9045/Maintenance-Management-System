@@ -13,10 +13,19 @@ import {
   Layers,
   ChevronRight,
   Eye,
+  Archive,
+  Trash2,
+  RotateCcw,
+  Clock,
+  AlertTriangle,
+  CheckCircle2,
+  X,
+  FileArchive,
 } from "lucide-react";
 import { DataTable, Column } from "@/core/ui-kit/DataTable";
 import { Button } from "@/core/ui-kit/Button";
 import { Badge } from "@/core/ui-kit/Badge";
+import { Modal } from "@/core/ui-kit/Modal";
 import { TreeView, TreeNodeData } from "@/core/ui-kit/TreeView";
 import { FilterBar } from "@/core/ui-kit/FilterBar";
 import { SevaFormModal } from "@/modules/seva/components/SevaFormModal";
@@ -24,10 +33,21 @@ import { format } from "date-fns";
 
 export default function SevaSheetPage() {
   const [viewMode, setViewMode] = useState<"table" | "tree" | "calendar" | "board">("table");
+  const [activeSection, setActiveSection] = useState<"active" | "archived">("active");
+  const [currentUser, setCurrentUser] = useState<any>(null);
+
   const [sevas, setSevas] = useState<any[]>([]);
   const [treeData, setTreeData] = useState<TreeNodeData[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
+
+  // Bulk actions state
+  const [selectedSevaIds, setSelectedSevaIds] = useState<Set<string>>(new Set());
+  const [isArchiveModalOpen, setIsArchiveModalOpen] = useState(false);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [isPerformingBulkAction, setIsPerformingBulkAction] = useState(false);
+  const [isDownloadingZip, setIsDownloadingZip] = useState(false);
+  const [purgeNotification, setPurgeNotification] = useState<string | null>(null);
 
   // Filters
   const [searchQuery, setSearchQuery] = useState("");
@@ -41,6 +61,17 @@ export default function SevaSheetPage() {
   const [page, setPage] = useState(1);
   const [pageSize] = useState(25);
   const [total, setTotal] = useState(0);
+
+  // Load user
+  useEffect(() => {
+    fetch("/api/v1/auth/me")
+      .then((r) => r.json())
+      .then((j) => setCurrentUser(j.data?.user || j.data))
+      .catch(() => {});
+  }, []);
+
+  const canManageSeva =
+    currentUser?.role === "ADMIN" || currentUser?.role === "COORDINATOR";
 
   useEffect(() => {
     fetch("/api/v1/masters/categories")
@@ -61,6 +92,7 @@ export default function SevaSheetPage() {
         page: String(page),
         pageSize: String(pageSize),
       });
+      if (activeSection === "archived") params.set("isArchived", "true");
       if (searchQuery) params.set("q", searchQuery);
       if (selectedCategory) params.set("categoryId", selectedCategory);
       if (selectedArea) params.set("areaId", selectedArea);
@@ -100,9 +132,191 @@ export default function SevaSheetPage() {
     if (viewMode === "tree") {
       loadTree();
     }
-  }, [page, searchQuery, selectedCategory, selectedArea, selectedPriority, viewMode]);
+  }, [page, searchQuery, selectedCategory, selectedArea, selectedPriority, viewMode, activeSection]);
+
+  // Selection handlers
+  const handleToggleSelect = (id: string) => {
+    setSelectedSevaIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleToggleSelectAll = () => {
+    const allSelected = sevas.length > 0 && sevas.every((s) => selectedSevaIds.has(s.id));
+    if (allSelected) {
+      setSelectedSevaIds(new Set());
+    } else {
+      setSelectedSevaIds(new Set(sevas.map((s) => s.id)));
+    }
+  };
+
+  const handleBulkDownload = async (ids?: string[]) => {
+    const targetIds = ids || Array.from(selectedSevaIds);
+    if (targetIds.length === 0) return;
+    setIsDownloadingZip(true);
+    try {
+      const url = `/api/v1/seva/bulk-files.zip?ids=${targetIds.join(",")}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error?.message || "Failed to download assets");
+        return;
+      }
+      const blob = await res.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = `seva-assets-bulk-${format(new Date(), "yyyyMMdd-HHmmss")}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      console.error(e);
+      window.open(`/api/v1/seva/bulk-files.zip?ids=${targetIds.join(",")}`, "_blank");
+    } finally {
+      setIsDownloadingZip(false);
+    }
+  };
+
+  const handleBulkArchive = async (withDownloadAndPurge: boolean) => {
+    const sevaIds = Array.from(selectedSevaIds);
+    if (sevaIds.length === 0) return;
+    setIsPerformingBulkAction(true);
+
+    try {
+      if (withDownloadAndPurge) {
+        // First download the ZIP archive of all assets
+        await handleBulkDownload(sevaIds);
+      }
+
+      // Call bulk archive API
+      const res = await fetch("/api/v1/seva/bulk-archive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sevaIds,
+          scheduleFilePurge: withDownloadAndPurge,
+        }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error?.message || "Failed to archive sevas");
+        return;
+      }
+
+      const json = await res.json();
+      setIsArchiveModalOpen(false);
+      setSelectedSevaIds(new Set());
+      loadSevas();
+
+      if (withDownloadAndPurge) {
+        setPurgeNotification(
+          `Archive completed! A combined ZIP of all assets was downloaded. In accordance with your selection, these files will be automatically purged from the server in 24 hours to reclaim disk space.`
+        );
+      } else {
+        setPurgeNotification(`Successfully archived ${json.archivedCount} Seva(s).`);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("An unexpected error occurred while archiving");
+    } finally {
+      setIsPerformingBulkAction(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const sevaIds = Array.from(selectedSevaIds);
+    if (sevaIds.length === 0) return;
+    setIsPerformingBulkAction(true);
+
+    try {
+      const res = await fetch("/api/v1/seva/bulk-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sevaIds }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error?.message || "Failed to delete sevas");
+        return;
+      }
+
+      const json = await res.json();
+      setIsDeleteModalOpen(false);
+      setSelectedSevaIds(new Set());
+      loadSevas();
+      setPurgeNotification(`Permanently deleted ${json.deletedCount} Seva(s).`);
+    } catch (e) {
+      console.error(e);
+      alert("An unexpected error occurred while deleting");
+    } finally {
+      setIsPerformingBulkAction(false);
+    }
+  };
+
+  const handleBulkUnarchive = async () => {
+    const sevaIds = Array.from(selectedSevaIds);
+    if (sevaIds.length === 0) return;
+    setIsPerformingBulkAction(true);
+
+    try {
+      const res = await fetch("/api/v1/seva/bulk-unarchive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sevaIds }),
+      });
+
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        alert(j.error?.message || "Failed to unarchive sevas");
+        return;
+      }
+
+      const json = await res.json();
+      setSelectedSevaIds(new Set());
+      loadSevas();
+      setPurgeNotification(`Restored ${json.unarchivedCount} Seva(s) back to active.`);
+    } catch (e) {
+      console.error(e);
+      alert("An error occurred while unarchiving");
+    } finally {
+      setIsPerformingBulkAction(false);
+    }
+  };
 
   const columns: Column<any>[] = [
+    ...(canManageSeva
+      ? [
+          {
+            key: "select",
+            header: (
+              <input
+                type="checkbox"
+                aria-label="Select all on page"
+                checked={sevas.length > 0 && sevas.every((s) => selectedSevaIds.has(s.id))}
+                onChange={handleToggleSelectAll}
+                className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              />
+            ),
+            width: "44px",
+            render: (s: any) => (
+              <input
+                type="checkbox"
+                aria-label={`Select seva ${s.code}`}
+                checked={selectedSevaIds.has(s.id)}
+                onChange={() => handleToggleSelect(s.id)}
+                className="rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+              />
+            ),
+          },
+        ]
+      : []),
     {
       key: "code",
       header: "Code",
@@ -124,6 +338,11 @@ export default function SevaSheetPage() {
           {s.isGroup && (
             <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-purple-100 text-purple-800 dark:bg-purple-950 dark:text-purple-300 font-semibold">
               Group Container
+            </span>
+          )}
+          {s.isArchived && (
+            <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-semibold">
+              Archived
             </span>
           )}
           <div className="text-xs text-slate-500 line-clamp-1">{s.description}</div>
@@ -197,6 +416,7 @@ export default function SevaSheetPage() {
     setIsExporting(true);
     try {
       const params = new URLSearchParams({ format: "csv" });
+      if (activeSection === "archived") params.set("isArchived", "true");
       if (selectedCategory) params.set("categoryId", selectedCategory);
       if (selectedArea) params.set("areaId", selectedArea);
       if (selectedPriority) params.set("priority", selectedPriority);
@@ -210,14 +430,14 @@ export default function SevaSheetPage() {
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `seva-report-${format(new Date(), "yyyyMMdd-HHmmss")}.csv`;
+      a.download = `seva-report-${activeSection}-${format(new Date(), "yyyyMMdd-HHmmss")}.csv`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch {
-      // Direct navigation fallback if blob download fails
       const params = new URLSearchParams({ format: "csv" });
+      if (activeSection === "archived") params.set("isArchived", "true");
       if (selectedCategory) params.set("categoryId", selectedCategory);
       if (selectedArea) params.set("areaId", selectedArea);
       if (selectedPriority) params.set("priority", selectedPriority);
@@ -230,6 +450,22 @@ export default function SevaSheetPage() {
 
   return (
     <div className="space-y-4">
+      {/* 24h Purge or Action Notification Banner */}
+      {purgeNotification && (
+        <div className="p-3.5 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 rounded-xl text-xs text-indigo-950 dark:text-indigo-200 flex items-center justify-between gap-3 shadow-sm animate-in fade-in">
+          <div className="flex items-center gap-2.5">
+            <Clock className="w-4 h-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <span className="font-medium">{purgeNotification}</span>
+          </div>
+          <button
+            onClick={() => setPurgeNotification(null)}
+            className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
       {/* Top Header & View Mode Switcher */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -237,7 +473,7 @@ export default function SevaSheetPage() {
             Seva Management Sheet
           </h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-            Organize, monitor and inspect community maintenance tasks across all views
+            Organize, monitor, bulk-archive and inspect community maintenance tasks across all views
           </p>
         </div>
 
@@ -283,11 +519,126 @@ export default function SevaSheetPage() {
             Export CSV
           </Button>
 
-          <Button variant="primary" size="sm" onClick={() => setIsFormOpen(true)} icon={<Plus className="w-4 h-4" />}>
-            New Seva
-          </Button>
+          {canManageSeva && activeSection === "active" && (
+            <Button variant="primary" size="sm" onClick={() => setIsFormOpen(true)} icon={<Plus className="w-4 h-4" />}>
+              New Seva
+            </Button>
+          )}
         </div>
       </div>
+
+      {/* Section Tabs: Active Sevas vs Archived Items */}
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => {
+              setActiveSection("active");
+              setSelectedSevaIds(new Set());
+              setPage(1);
+            }}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+              activeSection === "active"
+                ? "bg-indigo-600 text-white shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Active Sevas</span>
+          </button>
+
+          {canManageSeva && (
+            <button
+              onClick={() => {
+                setActiveSection("archived");
+                setSelectedSevaIds(new Set());
+                setPage(1);
+              }}
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                activeSection === "archived"
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              }`}
+            >
+              <Archive className="w-3.5 h-3.5" />
+              <span>Archived Sevas</span>
+            </button>
+          )}
+        </div>
+
+        {activeSection === "archived" && (
+          <div className="text-xs text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1.5">
+            <Archive className="w-3.5 h-3.5" />
+            <span>Archive Repository (Read-only occurrence spawning paused)</span>
+          </div>
+        )}
+      </div>
+
+      {/* Floating / Sticky Bulk Action Bar */}
+      {selectedSevaIds.size > 0 && canManageSeva && (
+        <div className="p-3 bg-indigo-900 text-white dark:bg-slate-900 dark:border dark:border-indigo-900/60 rounded-xl shadow-lg flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-3">
+            <span className="px-2.5 py-1 bg-white/20 dark:bg-indigo-950 text-white rounded-lg text-xs font-bold font-mono">
+              {selectedSevaIds.size}
+            </span>
+            <span className="text-xs font-semibold">
+              Seva{selectedSevaIds.size > 1 ? "s" : ""} selected
+            </span>
+            <button
+              onClick={() => setSelectedSevaIds(new Set())}
+              className="text-xs text-indigo-200 hover:text-white underline ml-2"
+            >
+              Clear Selection
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* Bulk Download ZIP button */}
+            <Button
+              size="sm"
+              variant="outline"
+              className="bg-white/10 hover:bg-white/20 text-white border-white/20 text-xs"
+              onClick={() => handleBulkDownload()}
+              isLoading={isDownloadingZip}
+              icon={<Download className="w-3.5 h-3.5" />}
+            >
+              Download Assets (ZIP)
+            </Button>
+
+            {activeSection === "active" ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border-amber-400/30 text-xs"
+                onClick={() => setIsArchiveModalOpen(true)}
+                icon={<Archive className="w-3.5 h-3.5" />}
+              >
+                Bulk Archive
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                variant="outline"
+                className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border-emerald-400/30 text-xs"
+                onClick={handleBulkUnarchive}
+                isLoading={isPerformingBulkAction}
+                icon={<RotateCcw className="w-3.5 h-3.5" />}
+              >
+                Bulk Unarchive
+              </Button>
+            )}
+
+            <Button
+              size="sm"
+              variant="danger"
+              className="text-xs"
+              onClick={() => setIsDeleteModalOpen(true)}
+              icon={<Trash2 className="w-3.5 h-3.5" />}
+            >
+              Bulk Delete
+            </Button>
+          </div>
+        </div>
+      )}
 
       {/* Filter Bar */}
       <FilterBar
@@ -321,19 +672,31 @@ export default function SevaSheetPage() {
             onPageChange: setPage,
           }}
           renderMobileCard={(s) => (
-            <Link href={`/seva/${s.id}`} className="block space-y-1.5">
-              <div className="flex items-center justify-between">
-                <span className="font-mono font-bold text-xs text-indigo-600 dark:text-indigo-400">{s.code}</span>
-                <Badge size="sm" variant={s.priority === "URGENT" ? "danger" : s.priority === "HIGH" ? "warning" : "info"}>
-                  {s.priority}
-                </Badge>
-              </div>
-              <div className="font-semibold text-slate-900 dark:text-slate-100 text-sm">{s.title}</div>
-              <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-                <span>{s.category?.name} • {s.area?.name}</span>
-                {s.isGroup && <span className="text-purple-600 font-semibold">Group Container</span>}
-              </div>
-            </Link>
+            <div className="flex items-start gap-2">
+              {canManageSeva && (
+                <input
+                  type="checkbox"
+                  aria-label={`Select seva ${s.code}`}
+                  checked={selectedSevaIds.has(s.id)}
+                  onChange={() => handleToggleSelect(s.id)}
+                  className="mt-1 rounded text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                />
+              )}
+              <Link href={`/seva/${s.id}`} className="block flex-1 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono font-bold text-xs text-indigo-600 dark:text-indigo-400">{s.code}</span>
+                  <Badge size="sm" variant={s.priority === "URGENT" ? "danger" : s.priority === "HIGH" ? "warning" : "info"}>
+                    {s.priority}
+                  </Badge>
+                </div>
+                <div className="font-semibold text-slate-900 dark:text-slate-100 text-sm">{s.title}</div>
+                <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
+                  <span>{s.category?.name} • {s.area?.name}</span>
+                  {s.isGroup && <span className="text-purple-600 font-semibold">Group Container</span>}
+                  {s.isArchived && <span className="text-amber-600 font-semibold">Archived</span>}
+                </div>
+              </Link>
+            </div>
           )}
         />
       )}
@@ -347,7 +710,6 @@ export default function SevaSheetPage() {
             <TreeView
               nodes={treeData}
               onSelectNode={(node) => {
-                // Navigate to selected node detail
                 const id = node.id;
                 window.location.href = `/seva/${id}`;
               }}
@@ -405,6 +767,110 @@ export default function SevaSheetPage() {
         onClose={() => setIsFormOpen(false)}
         onSuccess={loadSevas}
       />
+
+      {/* Bulk Archive Modal */}
+      {isArchiveModalOpen && (
+        <Modal
+          isOpen={isArchiveModalOpen}
+          onClose={() => setIsArchiveModalOpen(false)}
+          title={`Archive ${selectedSevaIds.size} Seva Record(s)`}
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800/60 rounded-xl text-xs text-amber-900 dark:text-amber-200 space-y-2">
+              <div className="font-semibold flex items-center gap-2 text-amber-800 dark:text-amber-300">
+                <Archive className="w-4 h-4 shrink-0" />
+                <span>Archive Confirmation & Asset Management</span>
+              </div>
+              <p>
+                Archiving will pause all recurrence schedules and move these Sevas to the Archived section.
+              </p>
+              <p className="font-medium">
+                Would you like to download all attached files (photos, completion proof, quotes) in a single ZIP file before archiving?
+              </p>
+            </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 text-xs text-slate-600 dark:text-slate-300 space-y-1">
+              <span className="font-semibold block text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-indigo-600" /> 24-Hour Server Space Cleanup
+              </span>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                If you download the asset bundle, the server background worker will schedule permanent deletion of these files from the server in 24 hours to reclaim disk space.
+              </p>
+            </div>
+
+            <div className="flex flex-col gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <Button
+                variant="primary"
+                size="sm"
+                isLoading={isPerformingBulkAction || isDownloadingZip}
+                onClick={() => handleBulkArchive(true)}
+                icon={<Download className="w-3.5 h-3.5" />}
+              >
+                Archive & Download Assets (Delete from Server in 24h)
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                isLoading={isPerformingBulkAction}
+                onClick={() => handleBulkArchive(false)}
+              >
+                Archive Only (Keep Files on Server)
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsArchiveModalOpen(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Bulk Delete Modal */}
+      {isDeleteModalOpen && (
+        <Modal
+          isOpen={isDeleteModalOpen}
+          onClose={() => setIsDeleteModalOpen(false)}
+          title={`Permanently Delete ${selectedSevaIds.size} Seva Record(s)`}
+          maxWidth="md"
+        >
+          <div className="space-y-4">
+            <div className="p-3.5 bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800/60 rounded-xl text-xs text-rose-900 dark:text-rose-200 flex items-start gap-2.5">
+              <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <span className="font-bold block text-rose-700 dark:text-rose-300">
+                  Permanent Data Deletion
+                </span>
+                <span className="mt-0.5 block">
+                  This action is immediate and non-reversible. It will permanently remove all selected Seva records, occurrences, task links, file associations, and checklists.
+                </span>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsDeleteModalOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                size="sm"
+                isLoading={isPerformingBulkAction}
+                onClick={handleBulkDelete}
+                icon={<Trash2 className="w-3.5 h-3.5" />}
+              >
+                Permanently Delete
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
