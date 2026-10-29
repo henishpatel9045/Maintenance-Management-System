@@ -15,6 +15,7 @@ npx prisma db push --skip-generate
 
 # Seed database if no users exist
 echo "[SEVA] Checking if initial seeding is required..."
+SEED_NEEDED=0
 node -e "
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -32,7 +33,7 @@ main().catch((err) => {
   console.error('[SEVA] Error checking users:', err);
   process.exit(1);
 }).finally(() => prisma.\$disconnect());
-" && SEED_NEEDED=$? || SEED_NEEDED=$?
+" || SEED_NEEDED=$?
 
 if [ "$SEED_NEEDED" -eq 10 ]; then
   echo "[SEVA] Running database seed..."

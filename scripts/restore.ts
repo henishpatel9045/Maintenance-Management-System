@@ -459,6 +459,12 @@ async function main() {
     console.log(`  Database      : ${POSTGRES_DB} restored and verified`);
     console.log(`  Assets/Uploads: Synchronized to ${TARGET_UPLOADS_DIR}`);
     console.log("  The system is fully accessible at: http://localhost:8080");
+    console.log("");
+    console.log("  * NOTE ON CREDENTIALS:");
+    console.log("    All user accounts & passwords have been restored to the exact state");
+    console.log("    recorded when this backup was taken.");
+    console.log("    To reset the admin password directly at any time:");
+    console.log("      docker compose exec app npm run reset-password -- -e admin@seva.local -p <NewPass>");
     console.log("========================================================================\n");
   } finally {
     // Clean up temporary workspace

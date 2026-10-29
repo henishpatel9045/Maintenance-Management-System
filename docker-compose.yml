@@ -7,8 +7,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-seva}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seva_dev_secret}
-      POSTGRES_DB: ${POSTGRES_DB:-seva_db}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-seva_secure_db_pass_2026!}
+      POSTGRES_DB: ${POSTGRES_DB:-seva_maintenance}
       TZ: ${TZ:-Australia/Adelaide}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
@@ -17,7 +17,7 @@ services:
     networks:
       - seva-net
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seva} -d ${POSTGRES_DB:-seva_db}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-seva} -d ${POSTGRES_DB:-seva_maintenance}" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,7 +33,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_secure_db_pass_2026!}@db:5432/${POSTGRES_DB:-seva_maintenance}?schema=public
       UPLOAD_DIR: /app/data/uploads
       BACKUP_DIR: /app/backups
       NEXT_TELEMETRY_DISABLED: 1
@@ -68,7 +68,7 @@ services:
       - .env
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_dev_secret}@db:5432/${POSTGRES_DB:-seva_db}?schema=public
+      DATABASE_URL: postgresql://${POSTGRES_USER:-seva}:${POSTGRES_PASSWORD:-seva_secure_db_pass_2026!}@db:5432/${POSTGRES_DB:-seva_maintenance}?schema=public
       UPLOAD_DIR: /app/data/uploads
       BACKUP_DIR: /app/backups
       NEXT_TELEMETRY_DISABLED: 1
