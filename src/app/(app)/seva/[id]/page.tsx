@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   FileText,
-  DollarSign,
   Download,
   Plus,
   Trash2,
@@ -50,7 +49,6 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
   const [seva, setSeva] = useState<any>(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [files, setFiles] = useState<any[]>([]);
-  const [quotesComparison, setQuotesComparison] = useState<any>(null);
   const [comments, setComments] = useState<any[]>([]);
   const [newComment, setNewComment] = useState("");
   const [rollup, setRollup] = useState<any>(null);
@@ -81,12 +79,6 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
   });
   const [isComplianceWarningOpen, setIsComplianceWarningOpen] = useState(false);
   const [complianceWarningMsg, setComplianceWarningMsg] = useState("");
-  const [engagePrompt, setEngagePrompt] = useState<{
-    quoteId: string;
-    contractorId: string;
-    contractorName: string;
-    amount: number;
-  } | null>(null);
 
   // Licences integration
   const canRequireLicences = hasPermission("licences.seva.require");
@@ -177,11 +169,6 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
       if (res.ok) {
         const json = await res.json();
         setFiles(json.data || []);
-      }
-      const qRes = await fetch(`/api/v1/seva/${sevaId}/quotes/compare`);
-      if (qRes.ok) {
-        const qJson = await qRes.json();
-        setQuotesComparison(qJson.data);
       }
     } catch {}
   };
@@ -292,59 +279,7 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
     } catch {}
   };
 
-  const handleApproveQuote = async (fileId: string) => {
-    try {
-      const res = await fetch(`/api/v1/files/${fileId}/approve-quote`, { method: "POST" });
-      if (res.ok) {
-        loadSeva();
-        loadFiles();
-        const q = files.find((f) => f.id === fileId);
-        if (q?.contractorId) {
-          const matchedC = allContractors.find((c) => c.id === q.contractorId);
-          setEngagePrompt({
-            quoteId: fileId,
-            contractorId: q.contractorId,
-            contractorName: matchedC?.companyName || q.supplierName || "Contractor",
-            amount: q.amount || 0,
-          });
-        }
-      }
-    } catch {}
-  };
 
-  const handleConfirmEngage = async () => {
-    if (!engagePrompt) return;
-    try {
-      const existing = sevaContractors.find((c) => c.contractorId === engagePrompt.contractorId);
-      const updatedList = existing
-        ? sevaContractors.map((c) =>
-            c.contractorId === engagePrompt.contractorId
-              ? { ...c, status: "ENGAGED", quotedAmount: engagePrompt.amount, confirmWarning: true }
-              : c
-          )
-        : [
-            ...sevaContractors,
-            {
-              contractorId: engagePrompt.contractorId,
-              role: "PRIMARY",
-              status: "ENGAGED",
-              quotedAmount: engagePrompt.amount,
-              confirmWarning: true,
-            },
-          ];
-
-      const res = await fetch(`/api/v1/seva/${sevaId}/contractors`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contractors: updatedList }),
-      });
-      if (res.ok) {
-        loadContractors();
-      }
-    } catch {} finally {
-      setEngagePrompt(null);
-    }
-  };
 
   const handleSelectContractorToAdd = (c: any) => {
     setSelectedContractorToAdd(c);
@@ -413,15 +348,7 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
     }
   };
 
-  const handleRevokeQuote = async (fileId: string) => {
-    try {
-      const res = await fetch(`/api/v1/files/${fileId}/revoke-quote`, { method: "POST" });
-      if (res.ok) {
-        loadSeva();
-        loadFiles();
-      }
-    } catch {}
-  };
+
 
   const handleArchive = async () => {
     try {
@@ -462,14 +389,11 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
 
   const tabs = [
     { id: "overview", label: "Overview" },
-    { id: "files", label: "Files & Quotes", count: files.length },
+    { id: "files", label: "Files", count: files.length },
     ...(contractorsEnabled ? [{ id: "contractors", label: "Contractors", count: sevaContractors.length }] : []),
     ...(seva.isGroup ? [{ id: "subseva", label: "Sub-Seva Tree", count: seva.children?.length }] : []),
     { id: "comments", label: "Comments", count: comments.length },
   ];
-
-  const quotes = files.filter((f) => f.bucket === "QUOTE");
-  const artefacts = files.filter((f) => f.bucket === "ARTEFACT");
 
   return (
     <div className="space-y-4">
@@ -833,85 +757,15 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
         </div>
       )}
 
-      {/* Tab: Files & Quotes */}
+      {/* Tab: Files */}
       {activeTab === "files" && (
         <div className="space-y-5">
-          {/* Compare Quotes Card (Screen 7) */}
-          {quotesComparison && quotesComparison.quotes?.length > 0 && (
-            <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-indigo-600 flex items-center gap-1.5">
-                  <DollarSign className="w-4 h-4" /> Compare Quotations ({quotesComparison.quotes.length})
-                </h2>
-                {quotesComparison.lowestAmount && (
-                  <span className="text-xs font-semibold text-emerald-600">
-                    Lowest Quote: ${quotesComparison.lowestAmount.toLocaleString()} AUD
-                  </span>
-                )}
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                {quotesComparison.quotes.map((q: any) => (
-                  <div
-                    key={q.id}
-                    className={`p-3.5 rounded-xl border flex flex-col justify-between gap-2.5 transition-all ${
-                      q.quoteStatus === "APPROVED"
-                        ? "border-emerald-500 bg-emerald-50/20"
-                        : q.isLowest
-                        ? "border-amber-400 bg-amber-50/10"
-                        : "border-slate-200 dark:border-slate-800"
-                    }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <span className="font-bold text-xs text-slate-900 dark:text-slate-100">{q.supplierName || "Supplier"}</span>
-                        {q.quoteStatus === "APPROVED" ? (
-                          <Badge size="sm" variant="success">APPROVED</Badge>
-                        ) : q.isLowest ? (
-                          <Badge size="sm" variant="warning">LOWEST</Badge>
-                        ) : null}
-                      </div>
-
-                      <div className="text-lg font-bold text-slate-900 dark:text-slate-100 mt-1">
-                        ${q.amount ? q.amount.toLocaleString() : "N/A"}{" "}
-                        <span className="text-xs font-normal text-slate-400">{q.currency}</span>
-                      </div>
-
-                      {q.notes && <p className="text-[11px] text-slate-500 mt-1 line-clamp-2">{q.notes}</p>}
-                    </div>
-
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
-                      <a
-                        href={`/api/v1/files/${q.id}/download`}
-                        target="_blank"
-                        className="text-indigo-600 hover:underline flex items-center gap-1"
-                      >
-                        <Download className="w-3.5 h-3.5" /> Download
-                      </a>
-
-                      {q.quoteStatus !== "APPROVED" ? (
-                        <Button size="sm" variant="primary" onClick={() => handleApproveQuote(q.id)}>
-                          Approve Quote
-                        </Button>
-                      ) : (
-                        <Button size="sm" variant="outline" onClick={() => handleRevokeQuote(q.id)}>
-                          Revoke Approval
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
           {/* Upload Widget */}
           <FileUploader
             bucket="ARTEFACT"
-            allowBucketSwitch
-            onUpload={async (uploadFiles, b) => {
+            onUpload={async (uploadFiles) => {
               const fd = new FormData();
-              fd.set("bucket", b);
+              fd.set("bucket", "ARTEFACT");
               uploadFiles.forEach((f) => fd.append("files", f));
               await fetch(`/api/v1/seva/${sevaId}/files`, {
                 method: "POST",
@@ -921,34 +775,36 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
             }}
           />
 
-          {/* Artefacts & Documents List */}
+          {/* Uploaded Files List */}
           <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-sm space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="text-xs font-bold uppercase tracking-wider text-slate-500">
-                Uploaded Artefacts & Proof ({artefacts.length})
+                Uploaded Files & Documents ({files.length})
               </h2>
-              <a
-                href={`/api/v1/seva/${sevaId}/files.zip`}
-                className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-              >
-                <Download className="w-3.5 h-3.5" /> Download All ZIP
-              </a>
+              {files.length > 0 && (
+                <a
+                  href={`/api/v1/seva/${sevaId}/files.zip`}
+                  className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download All ZIP
+                </a>
+              )}
             </div>
 
-            {artefacts.length === 0 ? (
-              <p className="text-xs text-slate-400 text-center py-6">No artefacts or photos uploaded yet</p>
+            {files.length === 0 ? (
+              <p className="text-xs text-slate-400 text-center py-6">No files or photos uploaded yet</p>
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {artefacts.map((art) => (
+                {files.map((file) => (
                   <div
-                    key={art.id}
+                    key={file.id}
                     className="p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 flex flex-col justify-between gap-2"
                   >
                     <div>
-                      {art.fileObject.mimeType.startsWith("image/") ? (
+                      {file.fileObject?.mimeType?.startsWith("image/") ? (
                         <img
-                          src={`/api/v1/files/${art.id}/download`}
-                          alt={art.caption || "Artefact"}
+                          src={`/api/v1/files/${file.id}/download`}
+                          alt={file.caption || file.fileObject?.originalName || "File"}
                           className="w-full h-24 object-cover rounded-lg"
                         />
                       ) : (
@@ -956,16 +812,16 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
                           <FileText className="w-8 h-8" />
                         </div>
                       )}
-                      <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate mt-1.5">
-                        {art.fileObject.originalName}
+                      <div className="text-xs font-semibold text-slate-900 dark:text-slate-100 truncate mt-1.5" title={file.fileObject?.originalName}>
+                        {file.fileObject?.originalName || file.caption || "Document"}
                       </div>
-                      {art.caption && <div className="text-[10px] text-slate-500 truncate">{art.caption}</div>}
+                      {file.caption && <div className="text-[10px] text-slate-500 truncate">{file.caption}</div>}
                     </div>
 
                     <div className="flex justify-between items-center text-[10px] text-slate-400 pt-1">
-                      <span>{art.stage}</span>
-                      <a href={`/api/v1/files/${art.id}/download`} download className="text-indigo-600 hover:underline">
-                        Download
+                      <span>{file.fileObject?.sizeBytes ? `${(Number(file.fileObject.sizeBytes) / 1024).toFixed(0)} KB` : "File"}</span>
+                      <a href={`/api/v1/files/${file.id}/download`} download className="text-indigo-600 dark:text-indigo-400 font-medium hover:underline flex items-center gap-1">
+                        <Download className="w-3 h-3" /> Download
                       </a>
                     </div>
                   </div>
@@ -1285,20 +1141,7 @@ export default function SevaDetailPage({ params }: { params: Promise<{ id: strin
         variant="danger"
       />
 
-      {/* Quote Engage Prompt Dialog */}
-      <ConfirmDialog
-        isOpen={!!engagePrompt}
-        onClose={() => setEngagePrompt(null)}
-        onConfirm={handleConfirmEngage}
-        title="Mark Contractor as Engaged?"
-        message={
-          engagePrompt
-            ? `Quotation approved for ${engagePrompt.contractorName} ($${engagePrompt.amount.toLocaleString()}). Would you like to automatically assign them as an ENGAGED contractor on this seva?`
-            : ""
-        }
-        confirmLabel="Engage Contractor"
-        variant="primary"
-      />
+
 
       {/* Edit Modal */}
       <SevaFormModal

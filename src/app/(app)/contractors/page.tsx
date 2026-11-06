@@ -20,7 +20,6 @@ import {
   ChevronRight,
   Clock,
   Sparkles,
-  Link as LinkIcon,
   HelpCircle,
 } from "lucide-react";
 import { Button } from "@/core/ui-kit/Button";
@@ -162,15 +161,6 @@ export default function ContractorsDirectoryPage() {
               <Button variant="secondary" size="sm">
                 <Upload className="w-4 h-4 mr-1.5" />
                 Import
-              </Button>
-            </Link>
-          )}
-
-          {canManage && (
-            <Link href="/contractors/link-quotes">
-              <Button variant="secondary" size="sm">
-                <LinkIcon className="w-4 h-4 mr-1.5" />
-                Link Quotes
               </Button>
             </Link>
           )}
